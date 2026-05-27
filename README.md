@@ -20,11 +20,11 @@ Some commands are also intended to be executed directly in the Linux terminal wi
 
 `how_to_mapping`
 
-Mapping of the 14 trimmed *Caretta caretta* samples against the Atlantic (RMU NEA) and Pacific (RMU NP) reference genomes, generating sorted BAM files.
+Mapping of the 14 trimmed *Caretta caretta* samples against the Atlantic (RMU: NEA) and Pacific (RMU: NP) reference genomes, generating sorted BAM files.
 
 `how_to_genotyping`
 
-Variant calling and genotyping workflow using the three reference genomes (Mediterranean, Atlantic, and Pacific). Includes VCF generation, filtering, and preparation for profile visualization to explore potential inversion regions.
+Variant calling and genotyping workflow using the three reference genomes: Mediterranean (MED), Atlantic (NEA), and Pacific (NP). Includes VCF generation, filtering, and preparation for profile visualization to explore potential inversion regions.
 
 `how_to_Manta`
 
