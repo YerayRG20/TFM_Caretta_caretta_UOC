@@ -1,4 +1,4 @@
-# Comparative genomics of *Caretta caretta*
+# Reference genomes and structural variants comparison in populations of *Caretta caretta*
 
 This repository contains the pipelines and workflows developed for my Master’s Thesis on comparative genomics in the loggerhead sea turtle (*Caretta caretta*). The project includes whole-genome alignments, dotplot visualization, genetic distance analyses, synteny analyses, and structural variant detection across different Regional Management Units (RMUs).
 
