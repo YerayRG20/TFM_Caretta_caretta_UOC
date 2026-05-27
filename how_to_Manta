@@ -22,7 +22,7 @@ conda create --solver=classic -n manta_env \
 
 # IMPORTANT: before to run Manta and evitate having any error, we need to filtrate the reads to eliminate the N-value. In our case, we need to eliminate 0,95% of coberture (N-value) 
 
-### 0) Filter BAM files to the 3 genomes
+### 0) Filtering BAM files to the 3 genomes
 
 mkdir /home/MBEacherin/yeray/sortedbam/sortedbam_noN
 mkdir /home/MBEacherin/yeray/sortedbamATL/sortedbamATL_noN
