@@ -4,7 +4,7 @@ This repository contains the pipelines and workflows developed for my Master’s
 
 ## Repository structure
 
-The `TFM/` folder contains six `.txt` pipeline files describing the analyses performed throughout the project. These files are not directly executable scripts, but detailed step-by-step workflows including terminal commands and embedded R/Python scripts.
+The `TFM/` folder contains six pipeline files describing the analyses performed throughout the project. These files are not directly executable scripts, but detailed step-by-step workflows including terminal commands and embedded R/Python scripts.
 
 Embedded scripts are delimited by:
 
