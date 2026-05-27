@@ -20,7 +20,7 @@ Some commands are also intended to be executed directly in the Linux terminal wi
 
 `how_to_mapping`
 
-Mapping of the 14 trimmed Caretta caretta samples against the Atlantic (RMU NEA) and Pacific (RMU NP) reference genomes, generating sorted BAM files.
+Mapping of the 14 trimmed *Caretta caretta* samples against the Atlantic (RMU NEA) and Pacific (RMU NP) reference genomes, generating sorted BAM files.
 
 `how_to_genotyping`
 
