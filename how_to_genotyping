@@ -1,0 +1,794 @@
+-------------------------- ######## HOW TO GENOTYPING ######### --------------------------
+
+--------------- ##### PIPELINE (Caretta caretta, 14 samples) ##### ---------------
+
+
+### 1) Generating VCF
+
+# This is the script for the Mediterranean genome; the same procedure must be performed for all genomes
+
+ls /home/MBEacherin/yeray/sortedbam/*.bam > bamlist_genoma1.txt
+
+---
+#!/bin/bash
+
+#SBATCH --job-name=bcftool
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=10
+#SBATCH --mem=100G
+#SBATCH --output %x-%N-%j.log
+#SBATCH --error %x-%N-%j.err
+#SBATCH --partition=irbio01
+
+. /etc/profile
+module load anaconda/2024.02
+source activate MBEtools
+
+
+
+bcftools mpileup --threads 10 -O b9 --annotate FORMAT/AD,FORMAT/ADF,FORMAT/ADR,FORMAT/DP,FORMAT/SP,INFO/AD,INFO/ADF,INFO/ADR -f /home/MBEccarreras/genomes/Caretta/GCA_023653815.1_GSC_CCare_1.0_genomic.fna \
+       -o /home/MBEacherin/yeray/sortedbam/Cc14.mpileup.bcf.gz -b /home/MBEacherin/yeray/sortedbam/bamlist_genoma1.txt | \
+       bcftools call -f GQ -m -v -O v /home/MBEacherin/yeray/sortedbam/Cc14.mpileup.bcf | \
+     bcftools annotate --set-id +'%CHROM\_%POS' > /home/MBEacherin/yeray/sortedbam/Cc14.vcf.gz
+---
+
+### 2) Filtering VCF
+
+# This is the script for the Mediterranean genome; the same procedure must be performed for all genomes
+
+nano filter.slurm
+
+---
+#!/bin/bash
+
+#SBATCH --job-name=Cc73_1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=12
+#SBATCH --mem=100G
+#SBATCH --output %x-%N-%j.log
+#SBATCH --error %x-%N-%j.err
+#SBATCH --partition=irbio01
+
+. /etc/profile
+module load vcftools/d511f46
+#module load plink/1.9
+#module load anaconda/2024.02
+#source activate MBEtools
+
+vcftools --vcf /home/MBEacherin/yeray/sortedbam/Cc14.vcf --minDP 5 --max-meanDP 20 --maf 0.03 --remove-indels --max-missing 1 --min-alleles 2  --max-alleles 2 --recode --out /home/MBEacherin/yeray/sortedbam/Cc14_filtered
+---
+
+# Now we have the filtered VCF containing all chromosomes, but to detect potential candidate inversion regions, additional filters must be applied
+
+### 3) Additional filters
+
+# This is the script for the Mediterranean genome; the same procedure must be performed for all genomes
+
+nano filter_inversion.slurm
+
+---
+#!/bin/bash
+
+#SBATCH --job-name=Cc14_1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=12
+#SBATCH --mem=100G
+#SBATCH --output %x-%N-%j.log
+#SBATCH --error %x-%N-%j.err
+#SBATCH --partition=irbio01
+
+. /etc/profile
+module load vcftools/d511f46
+#module load plink/1.9
+#module load anaconda/2024.02
+#source activate MBEtools
+
+vcftools --vcf Cc14_filtered.recode.vcf --max-missing 1 --recode --out Cc14_missing | \ 
+vcftools --vcf Cc14_missing.recode.vcf --012 --out Cc14_inversion
+---
+
+# To select the windows for generating the profiles of the 14 samples for each assembly, we propose two possible scenarios
+
+### 4) Length vs snps
+
+# We selected the Pacific genome as an example for visualization purposes; this choice is arbitrary and only intended to facilitate the visualization of the profiles
+
+# 1st scenario 
+
+nano plot_chr_length_vs_snps_windows.R
+
+---
+setwd("/home/MBEacherin/yeray/inversion/PAC")
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(ggplot2)
+  library(scales)
+})
+
+# =========================
+# INPUT
+# =========================
+
+pos_file <- "/home/MBEacherin/yeray/sortedbamPAC/Cc14_inversion.012.pos"
+
+position <- read.table(pos_file, sep = "\t", header = FALSE)
+colnames(position) <- c("CHR", "POS")
+
+# Ordre dels 28 cromosomes del genoma de referència PAC
+orden_chr <- c(
+  "NC_134206.1",
+  "NC_134207.1",
+  "NC_134208.1",
+  "NC_134209.1",
+  "NC_134210.1",
+  "NC_134211.1",
+  "NC_134212.1",
+  "NC_134213.1",
+  "NC_134214.1",
+  "NC_134215.1",
+  "NC_134216.1",
+  "NC_134217.1",
+  "NC_134218.1",
+  "NC_134219.1",
+  "NC_134220.1",
+  "NC_134221.1",
+  "NC_134222.1",
+  "NC_134223.1",
+  "NC_134224.1",
+  "NC_134225.1",
+  "NC_134226.1",
+  "NC_134227.1",
+  "NC_134228.1",
+  "NC_134229.1",
+  "NC_134230.1",
+  "NC_134231.1",
+  "NC_134232.1",
+  "NC_134233.1"
+)
+
+# =========================
+# SUMMARY TABLE
+# =========================
+
+chr_summary <- position %>%
+  filter(CHR %in% orden_chr) %>%
+  group_by(CHR) %>%
+  summarise(
+    n_snps = n(),
+    chr_start = min(POS, na.rm = TRUE),
+    chr_end = max(POS, na.rm = TRUE),
+    chr_length_bp = max(POS, na.rm = TRUE) - min(POS, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    chr_index = match(CHR, orden_chr),
+    chr_label = as.character(chr_index),
+    window_group = case_when(
+      chr_index %in% 1:3 ~ "Chr 1-3 | 20000/5000",
+      chr_index %in% 4:11 ~ "Chr 4-11 | 10000/2500",
+      chr_index %in% 12:28 ~ "Chr 12-28 | 5000/1000"
+    )
+  ) %>%
+  arrange(chr_index)
+
+# Per si algun cromosoma tingués POS inicial molt proper a 1,
+# també guardem el màxim absolut, que pot ser útil com a referència
+chr_summary <- chr_summary %>%
+  mutate(chr_max_bp = chr_end)
+
+# =========================
+# COLORS
+# =========================
+
+group_colors <- c(
+  "Chr 1-3 | 20000/5000"  = "#4C78A8",
+  "Chr 4-11 | 10000/2500" = "#F58518",
+  "Chr 12-28 | 5000/1000" = "#54A24B"
+)
+
+# =========================
+# PLOT
+# =========================
+
+p <- ggplot(
+  chr_summary,
+  aes(x = chr_length_bp, y = n_snps, colour = window_group)
+) +
+  geom_point(size = 3.5) +
+  scale_color_manual(values = group_colors, drop = FALSE) +
+  scale_x_continuous(labels = comma) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    x = "Chromosome length (bp)",
+    y = "Number of SNPs",
+    colour = "Window class"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11),
+    axis.text = element_text(size = 12, face = "bold", colour = "black"),
+    axis.title = element_text(size = 14, face = "bold"),
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
+  )
+
+# =========================
+# OUTPUT
+# =========================
+
+pdf("chromosome_length_vs_snps_window_justification.pdf", width = 9, height = 6)
+print(p)
+dev.off()
+
+write.table(
+  chr_summary,
+  file = "chromosome_length_vs_snps_window_justification.txt",
+  sep = "\t",
+  row.names = FALSE,
+  quote = FALSE
+)
+
+cat("Done.\n")
+cat("PDF: chromosome_length_vs_snps_window_justification.pdf\n")
+cat("Table: chromosome_length_vs_snps_window_justification.txt\n")
+---
+
+# 2nd scenario
+
+nano plot_chr_length_vs_snps_windows_v2.R
+
+---
+setwd("/home/MBEacherin/yeray/inversion/PAC")
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(ggplot2)
+  library(scales)
+})
+
+# =========================
+# INPUT
+# =========================
+
+pos_file <- "/home/MBEacherin/yeray/sortedbamPAC/Cc14_inversion.012.pos"
+
+position <- read.table(pos_file, sep = "\t", header = FALSE)
+colnames(position) <- c("CHR", "POS")
+
+orden_chr <- c(
+  "NC_134206.1",
+  "NC_134207.1",
+  "NC_134208.1",
+  "NC_134209.1",
+  "NC_134210.1",
+  "NC_134211.1",
+  "NC_134212.1",
+  "NC_134213.1",
+  "NC_134214.1",
+  "NC_134215.1",
+  "NC_134216.1",
+  "NC_134217.1",
+  "NC_134218.1",
+  "NC_134219.1",
+  "NC_134220.1",
+  "NC_134221.1",
+  "NC_134222.1",
+  "NC_134223.1",
+  "NC_134224.1",
+  "NC_134225.1",
+  "NC_134226.1",
+  "NC_134227.1",
+  "NC_134228.1",
+  "NC_134229.1",
+  "NC_134230.1",
+  "NC_134231.1",
+  "NC_134232.1",
+  "NC_134233.1"
+)
+
+# =========================
+# SUMMARY TABLE
+# =========================
+
+chr_summary <- position %>%
+  filter(CHR %in% orden_chr) %>%
+  group_by(CHR) %>%
+  summarise(
+    n_snps = n(),
+    chr_start = min(POS, na.rm = TRUE),
+    chr_end = max(POS, na.rm = TRUE),
+    chr_length_bp = max(POS, na.rm = TRUE) - min(POS, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    chr_index = match(CHR, orden_chr),
+    chr_label = as.character(chr_index),
+    window_group = case_when(
+      chr_index == 1 ~ "Chr 1 | 40000/10000",
+      chr_index == 2 ~ "Chr 2 | 30000/7500",
+      chr_index == 3 ~ "Chr 3 | 20000/5000",
+      chr_index %in% 4:11 ~ "Chr 4-11 | 10000/2500",
+      chr_index %in% 12:28 ~ "Chr 12-28 | 5000/1000"
+    ),
+    chr_max_bp = chr_end
+  ) %>%
+  arrange(chr_index)
+
+# =========================
+# LEGEND ORDER
+# =========================
+
+window_levels <- c(
+  "Chr 1 | 40000/10000",
+  "Chr 2 | 30000/7500",
+  "Chr 3 | 20000/5000",
+  "Chr 4-11 | 10000/2500",
+  "Chr 12-28 | 5000/1000"
+)
+
+chr_summary <- chr_summary %>%
+  mutate(window_group = factor(window_group, levels = window_levels))
+
+# =========================
+# COLORS
+# =========================
+
+group_colors <- c(
+  "Chr 1 | 40000/10000"   = "#4C78A8",
+  "Chr 2 | 30000/7500"    = "#72B7B2",
+  "Chr 3 | 20000/5000"    = "#B279A2",
+  "Chr 4-11 | 10000/2500" = "#F58518",
+  "Chr 12-28 | 5000/1000" = "#54A24B"
+)
+
+# =========================
+# PLOT
+# =========================
+
+p <- ggplot(
+  chr_summary,
+  aes(x = chr_length_bp, y = n_snps, colour = window_group)
+) +
+  geom_point(size = 3.5) +
+  scale_color_manual(
+    values = group_colors,
+    breaks = window_levels,
+    drop = FALSE
+  ) +
+  scale_x_continuous(labels = comma) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    x = "Chromosome length (bp)",
+    y = "Number of SNPs",
+    colour = "Window class"
+  ) +
+  guides(
+    colour = guide_legend(
+      nrow = 2,
+      byrow = TRUE
+    )
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.box = "vertical",
+    axis.text = element_text(size = 12, face = "bold", colour = "black"),
+    axis.title = element_text(size = 14, face = "bold")
+  )
+
+# =========================
+# OUTPUT
+# =========================
+
+pdf("chromosome_length_vs_snps_window_justification_v2.pdf", width = 10, height = 6)
+print(p)
+dev.off()
+
+write.table(
+  chr_summary,
+  file = "chromosome_length_vs_snps_window_justification_v2.txt",
+  sep = "\t",
+  row.names = FALSE,
+  quote = FALSE
+)
+
+cat("Done.\n")
+cat("PDF: chromosome_length_vs_snps_window_justification_v2.pdf\n")
+cat("Table: chromosome_length_vs_snps_window_justification_v2.txt\n")
+---
+
+### 5) Visualization
+
+nano run_inversions_all_windows.R
+
+---
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyverse)
+  library(reshape2)
+  library(scales)
+})
+
+# =========================
+# AUTO CONFIG
+# =========================
+
+base_dir <- getwd()
+genome <- basename(base_dir)
+
+cat("Detected genome:", genome, "\n")
+
+if (genome == "PAC") {
+  input_prefix <- "/home/MBEacherin/yeray/sortedbamPAC/Cc14_inversion.012"
+  metadata_file <- "/home/MBEacherin/yeray/inversion/pop_Cc.txt"
+
+  orden_chr <- c(
+    "NC_134206.1","NC_134207.1","NC_134208.1","NC_134209.1","NC_134210.1","NC_134211.1",
+    "NC_134212.1","NC_134213.1","NC_134214.1","NC_134215.1","NC_134216.1","NC_134217.1",
+    "NC_134218.1","NC_134219.1","NC_134220.1","NC_134221.1","NC_134222.1","NC_134223.1",
+    "NC_134224.1","NC_134225.1","NC_134226.1","NC_134227.1","NC_134228.1","NC_134229.1",
+    "NC_134230.1","NC_134231.1","NC_134232.1","NC_134233.1"
+  )
+
+} else if (genome == "MED") {
+  input_prefix <- "/home/MBEacherin/yeray/sortedbam/Cc14_inversion.012"
+  metadata_file <- "/home/MBEacherin/yeray/inversion/pop_CC.txt"
+
+  orden_chr <- c(
+    "CM042760.1","CM042761.1","CM042762.1","CM042763.1","CM042764.1","CM042765.1",
+    "CM042766.1","CM042767.1","CM042768.1","CM042769.1","CM042770.1","CM042771.1",
+    "CM042772.1","CM042773.1","CM042774.1","CM042775.1","CM042776.1","CM042777.1",
+    "CM042778.1","CM042779.1","CM042780.1","CM042781.1","CM042782.1","CM042783.1",
+    "CM042784.1","CM042785.1","CM042786.1","CM042787.1"
+  )
+
+} else if (genome == "ATL") {
+  input_prefix <- "/home/MBEacherin/yeray/sortedbamATL/Cc14_inversion.012"
+  metadata_file <- "/home/MBEacherin/yeray/inversion/pop_Cc.txt"
+
+  orden_chr <- c(
+    "OZ220763.1","OZ220764.1","OZ220765.1","OZ220766.1","OZ220767.1","OZ220768.1",
+    "OZ220769.1","OZ220770.1","OZ220771.1","OZ220772.1","OZ220773.1","OZ220774.1",
+    "OZ220775.1","OZ220776.1","OZ220777.1","OZ220778.1","OZ220779.1","OZ220780.1",
+    "OZ220781.1","OZ220782.1","OZ220783.1","OZ220784.1","OZ220785.1","OZ220786.1",
+    "OZ220787.1","OZ220788.1","OZ220789.1","OZ220790.1"
+  )
+
+} else {
+  stop("Directory must be PAC, MED or ATL")
+}
+
+# =========================
+# INPUT
+# =========================
+
+table <- read.table(paste0(input_prefix, ""), sep = "\t", header = FALSE)
+names_df <- read.table(paste0(input_prefix, ".indv"), sep = "\t", header = FALSE)
+position <- read.table(paste0(input_prefix, ".pos"), sep = "\t", header = FALSE)
+
+table <- as.data.frame(table)
+names_df <- as.data.frame(names_df)
+position <- as.data.frame(position)
+
+colnames(position) <- c("CHR", "POS")
+table <- dplyr::select(table, -1)
+
+genotips <- t(table)
+genotips <- as.data.frame(genotips)
+
+sample_names <- as.character(t(names_df))
+colnames(genotips) <- sample_names
+
+TS <- cbind(position, genotips)
+TS[TS == -1] <- NA
+
+write.csv(TS, file.path(base_dir, "TS.csv"), row.names = FALSE)
+
+metadata <- read.table(metadata_file, header = TRUE)
+
+# =========================
+# WINDOW SCHEMES
+# =========================
+
+old_chr_groups <- tibble(
+  chromosome = orden_chr,
+  chr_index = seq_along(orden_chr),
+  window = case_when(
+    chr_index %in% 1:3 ~ 20000,
+    chr_index %in% 4:11 ~ 10000,
+    chr_index %in% 12:28 ~ 5000
+  ),
+  step = case_when(
+    chr_index %in% 1:3 ~ 5000,
+    chr_index %in% 4:11 ~ 2500,
+    chr_index %in% 12:28 ~ 1000
+  )
+)
+
+new_chr_groups <- tibble(
+  chromosome = orden_chr,
+  chr_index = seq_along(orden_chr),
+  window = case_when(
+    chr_index == 1 ~ 40000,
+    chr_index == 2 ~ 30000,
+    chr_index == 3 ~ 20000,
+    chr_index %in% 4:11 ~ 10000,
+    chr_index %in% 12:28 ~ 5000
+  ),
+  step = case_when(
+    chr_index == 1 ~ 10000,
+    chr_index == 2 ~ 7500,
+    chr_index == 3 ~ 5000,
+    chr_index %in% 4:11 ~ 2500,
+    chr_index %in% 12:28 ~ 1000
+  )
+)
+
+# =========================
+# COLORS
+# =========================
+
+pop_colors <- c(
+  "MED" = "#FFB133",
+  "NP"  = "#ACACA7",
+  "NWA" = "#C991B7",
+  "NEA" = "#4999B6"
+)
+
+loc1_colors <- c(
+  "BEL"     = "#FFB133",
+  "ZAK"     = "#FDF2C3",
+  "LI"      = "#FDE589",
+  "BOA"     = "#4999B6",
+  "FL"      = "#E6BED9",
+  "MEX-ATL" = "#C991B7",
+  "MEX-PAC" = "#ACACA7"
+)
+
+# =========================
+# FUNCTION
+# =========================
+
+Detect_Inversions <- function(df, window, step) {
+  chromosome <- df[, 1]
+  data_cols <- df[, -1]
+  total <- nrow(df)
+
+  if (total < window) return(NULL)
+
+  spots <- seq(from = 1, to = (total - window + 1), by = step)
+
+  result <- data.frame(
+    chromosome = character(length(spots)),
+    stringsAsFactors = FALSE
+  )
+
+  for (col in names(data_cols)) {
+    result[[paste0(col, "_mean")]] <- numeric(length(spots))
+  }
+
+  for (i in seq_along(spots)) {
+    idx1 <- spots[i]
+    idx2 <- spots[i] + window - 1
+
+    window_chromosome <- chromosome[idx1:idx2]
+
+    if (length(unique(window_chromosome)) == 1) {
+      result$chromosome[i] <- unique(window_chromosome)
+
+      for (col in names(data_cols)) {
+        window_data <- data_cols[[col]][idx1:idx2]
+        if (all(is.na(window_data))) {
+          result[[paste0(col, "_mean")]][i] <- NA
+        } else {
+          result[[paste0(col, "_mean")]][i] <- mean(window_data, na.rm = TRUE)
+        }
+      }
+    }
+  }
+
+  result <- result %>%
+    filter(chromosome != "", !is.na(POS_mean))
+
+  return(result)
+}
+
+# =========================
+# ANALYSIS FUNCTION
+# =========================
+
+run_scheme <- function(chr_groups, scheme_name) {
+
+  cat("\n=============================\n")
+  cat("Running scheme:", scheme_name, "\n")
+  cat("=============================\n\n")
+
+  results_list <- list()
+
+  for (i in seq_len(nrow(chr_groups))) {
+    chr_i <- chr_groups$chromosome[i]
+    window_i <- chr_groups$window[i]
+    step_i <- chr_groups$step[i]
+
+    cat("Running", chr_i, "with window =", window_i, "step =", step_i, "\n")
+    flush.console()
+
+    TS_chr <- TS %>% filter(CHR == chr_i)
+    res_chr <- Detect_Inversions(TS_chr, window = window_i, step = step_i)
+
+    if (!is.null(res_chr) && nrow(res_chr) > 0) {
+      res_chr$window <- window_i
+      res_chr$step <- step_i
+      res_chr$scheme <- scheme_name
+      results_list[[chr_i]] <- res_chr
+    }
+  }
+
+  newTS <- bind_rows(results_list)
+
+  write.table(
+    newTS,
+    file = paste0(scheme_name, "_windows_inversiones_all_chr.txt"),
+    sep = "\t", row.names = FALSE, quote = FALSE
+  )
+
+  newTS_long <- newTS %>%
+    melt(id.vars = c("chromosome", "POS_mean", "window", "step", "scheme")) %>%
+    mutate(Sample = gsub("_mean", "", variable)) %>%
+    left_join(metadata, by = c("Sample" = "Sample"))
+
+  newTS_long$Chr <- factor(newTS_long$chromosome, levels = orden_chr)
+  newTS_long <- newTS_long[order(newTS_long$Chr, newTS_long$POS_mean), ]
+
+  newTS_clean <- newTS_long %>%
+    filter(
+      !is.na(value),
+      !is.na(POS_mean),
+      !is.na(Chr),
+      !is.na(chromosome)
+    )
+
+  write.table(
+    newTS_clean,
+    file = paste0(scheme_name, "_windows_inversiones_all_chr_with_metadata.txt"),
+    sep = "\t", row.names = FALSE, quote = FALSE
+  )
+
+  newTS_clean <- newTS_clean %>%
+    mutate(
+      Location1_plot = case_when(
+        Location1 == "Belek" ~ "BEL",
+        Location1 == "Zakynthos" ~ "ZAK",
+        Location1 == "Libya" ~ "LI",
+        Location1 == "Boavista" ~ "BOA",
+        Location1 == "Florida" ~ "FL",
+        Location1 == "QuintanaRoo" ~ "MEX-ATL",
+        Location1 == "MexicoPacific" ~ "MEX-PAC",
+        TRUE ~ as.character(Location1)
+      ),
+      Location2_plot = as.character(Location2)
+    )
+
+  plot_pop <- newTS_clean %>%
+    filter(!is.na(Location2_plot), !is.na(Sample))
+
+  plot_loc1 <- newTS_clean %>%
+    filter(!is.na(Location1_plot), !is.na(Sample))
+
+  # =========================
+  # PDF Location2
+  # =========================
+
+  pdfname1 <- paste0(scheme_name, "_windows_Location2.pdf")
+  pdf(file = pdfname1, width = 12, height = 6, onefile = TRUE)
+
+  for (chr_i in orden_chr) {
+    cat("Plotting", scheme_name, "Location2:", chr_i, "\n")
+    flush.console()
+
+    df_chr <- plot_pop %>% filter(chromosome == chr_i)
+    if (nrow(df_chr) == 0) next
+
+    w_chr <- unique(df_chr$window)
+    s_chr <- unique(df_chr$step)
+
+    p1 <- ggplot(df_chr, aes(x = POS_mean, y = value, colour = Location2_plot, group = Sample)) +
+      geom_line(linewidth = 0.6, na.rm = TRUE) +
+      theme_classic() +
+      scale_x_continuous(labels = comma) +
+      scale_y_continuous(name = "Homozygosity") +
+      scale_color_manual(values = pop_colors, drop = FALSE) +
+      labs(
+        title = paste0(chr_i, " | window=", w_chr, " step=", s_chr),
+        x = "Position",
+        colour = "Population"
+      ) +
+      theme(
+        legend.position = "bottom",
+        axis.text = element_text(size = 12, face = "bold"),
+        axis.title = element_text(size = 14, face = "bold"),
+        plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
+      )
+
+    print(p1)
+  }
+
+  dev.off()
+  cat("PDF written:", pdfname1, "\n")
+  flush.console()
+
+  # =========================
+  # PDF Location1
+  # =========================
+
+  pdfname2 <- paste0(scheme_name, "_windows_Location1.pdf")
+  pdf(file = pdfname2, width = 12, height = 6, onefile = TRUE)
+
+  for (chr_i in orden_chr) {
+    cat("Plotting", scheme_name, "Location1:", chr_i, "\n")
+    flush.console()
+
+    df_chr <- plot_loc1 %>% filter(chromosome == chr_i)
+    if (nrow(df_chr) == 0) next
+
+    w_chr <- unique(df_chr$window)
+    s_chr <- unique(df_chr$step)
+
+    p2 <- ggplot(df_chr, aes(x = POS_mean, y = value, colour = Location1_plot, group = Sample)) +
+      geom_line(linewidth = 0.6, na.rm = TRUE) +
+      theme_classic() +
+      scale_x_continuous(labels = comma) +
+      scale_y_continuous(name = "Homozygosity") +
+      scale_color_manual(values = loc1_colors, drop = FALSE) +
+      labs(
+        title = paste0(chr_i, " | window=", w_chr, " step=", s_chr),
+        x = "Position",
+        colour = "Sampling site"
+      ) +
+      theme(
+        legend.position = "bottom",
+        axis.text = element_text(size = 12, face = "bold"),
+        axis.title = element_text(size = 14, face = "bold"),
+        plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
+      )
+
+    print(p2)
+  }
+
+  dev.off()
+  cat("PDF written:", pdfname2, "\n")
+  flush.console()
+}
+
+# =========================
+# RUN BOTH SCHEMES
+# =========================
+
+run_scheme(old_chr_groups, "old")
+run_scheme(new_chr_groups, "new")
+
+cat("All analyses finished.\n")
+---
+
+nano run_inversions_all_windows.sh
+
+---
+#!/bin/bash
+#SBATCH --job-name=inversions_MED
+#SBATCH --output=/home/MBEacherin/yeray/inversion/MED/inversions_all_%j.out
+#SBATCH --error=/home/MBEacherin/yeray/inversion/MED/inversions_all_%j.err
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+
+source /aplic/anaconda/2024.02/etc/profile.d/conda.sh
+conda activate /home/MBEacherin/.conda/envs/rstudio
+
+cd /home/MBEacherin/yeray/inversion/MED
+Rscript --vanilla run_inversions_all_windows.R
+---
+
+# We generated four PDF files representing the two different visualization scenarios, and within each scenario the 14 samples are classified according to RMU and sampling site
