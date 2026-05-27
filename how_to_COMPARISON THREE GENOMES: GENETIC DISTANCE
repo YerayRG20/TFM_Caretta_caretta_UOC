@@ -1,0 +1,481 @@
+-------------------------- ######## COMPARISON THREE GENOMES: GENETIC DISTANCE ######### --------------------------
+
+--------------- ##### PIPELINE (Caretta caretta, 3 assemblies) ##### ---------------
+
+### 1) Preparing 30 kb windows
+
+mkdir -p /home/MBEacherin/yeray/genomes_comparison/genetic_distance/{tables,scripts,plots,logs}
+
+# We need to reconstruct the 30 kb windows only on the 28 main chromosomes of each reference:
+MED_vs_ATL → MED reference
+MED_vs_PAC → MED reference
+ATL_vs_PAC → ATL reference
+And we need to take these 28 chromosomes from the .fai
+
+nano /home/MBEacherin/yeray/genomes_comparison/genetic_distance/scripts/make_30kb_windows.py
+
+---
+#!/usr/bin/env python3
+from __future__ import annotations
+import math
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+
+WINDOW = 30000
+
+BASE = Path("/home/MBEacherin/yeray/genomes_comparison")
+VAR_DIR = BASE / "asm_compare" / "vars"
+OUT_DIR = BASE / "genetic_distance" / "tables"
+
+FILES = {
+    "MED_vs_ATL": {
+        "vcf": VAR_DIR / "MED_vs_ATL.var.txt",
+        "fai": Path("/home/MBEacherin/yeray/genomes/GCA_023653815.1_GSC_CCare_1.0_genomic.fna.fai"),
+    },
+    "MED_vs_PAC": {
+        "vcf": VAR_DIR / "MED_vs_PAC.var.txt",
+        "fai": Path("/home/MBEacherin/yeray/genomes/GCA_023653815.1_GSC_CCare_1.0_genomic.fna.fai"),
+    },
+    "ATL_vs_PAC": {
+        "vcf": VAR_DIR / "ATL_vs_PAC.var.txt",
+        "fai": Path("/home/MBEacherin/yeray/genomes/GCA_965117115.1_CarCar_QM_v1.21.12_Sc_genomic.fna.fai"),
+    },
+}
+
+
+def read_main_28_from_fai(fai_path: Path) -> List[Tuple[str, int]]:
+    contigs: List[Tuple[str, int]] = []
+    with fai_path.open() as fh:
+        for i, line in enumerate(fh):
+            if i >= 28:
+                break
+            fields = line.rstrip("\n").split("\t")
+            contigs.append((fields[0], int(fields[1])))
+    return contigs
+
+
+def init_windows(contigs: List[Tuple[str, int]]) -> Dict[str, List[int]]:
+    windows: Dict[str, List[int]] = {}
+    for chrom, length in contigs:
+        nwin = math.ceil(length / WINDOW)
+        windows[chrom] = [0] * nwin
+    return windows
+
+
+def fill_windows(vcf_path: Path, windows: Dict[str, List[int]]) -> None:
+    with vcf_path.open() as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) < 2:
+                continue
+            chrom = fields[0]
+            if chrom not in windows:
+                continue
+            try:
+                pos = int(fields[1])
+            except ValueError:
+                continue
+            idx = (pos - 1) // WINDOW
+            if 0 <= idx < len(windows[chrom]):
+                windows[chrom][idx] += 1
+
+
+def write_table(
+    comparison: str,
+    contigs: List[Tuple[str, int]],
+    windows: Dict[str, List[int]],
+    out_path: Path,
+) -> None:
+    with out_path.open("w") as out:
+        out.write(
+            "\t".join(
+                [
+                    "comparison",
+                    "chromosome",
+                    "chrom_length",
+                    "window_index",
+                    "window_start",
+                    "window_end",
+                    "window_size",
+                    "variant_count",
+                    "genetic_distance",
+                ]
+            ) + "\n"
+        )
+        for chrom, chrom_len in contigs:
+            for i, count in enumerate(windows[chrom], start=1):
+                start = (i - 1) * WINDOW + 1
+                end = min(i * WINDOW, chrom_len)
+                size = end - start + 1
+                gd = count / size
+                out.write(
+                    "\t".join(
+                        [
+                            comparison,
+                            chrom,
+                            str(chrom_len),
+                            str(i),
+                            str(start),
+                            str(end),
+                            str(size),
+                            str(count),
+                            f"{gd:.8f}",
+                        ]
+                    ) + "\n"
+                )
+
+
+def main() -> None:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    for comparison, cfg in FILES.items():
+        contigs = read_main_28_from_fai(cfg["fai"])
+        windows = init_windows(contigs)
+        fill_windows(cfg["vcf"], windows)
+        out_path = OUT_DIR / f"{comparison}_30kb.tsv"
+        write_table(comparison, contigs, windows, out_path)
+        print(f"[OK] {comparison} -> {out_path}")
+
+
+if __name__ == "__main__":
+    main()
+---
+
+python /home/MBEacherin/yeray/genomes_comparison/genetic_distance/scripts/make_30kb_windows.py
+
+# To verify that everything is correct
+
+head -n 5 /home/MBEacherin/yeray/genomes_comparison/genetic_distance/tables/MED_vs_ATL_30kb.tsv
+head -n 5 /home/MBEacherin/yeray/genomes_comparison/genetic_distance/tables/MED_vs_PAC_30kb.tsv
+head -n 5 /home/MBEacherin/yeray/genomes_comparison/genetic_distance/tables/ATL_vs_PAC_30kb.tsv
+
+### 2) Summary table by chromosome
+
+nano /home/MBEacherin/yeray/genomes_comparison/genetic_distance/scripts/make_chr_means.py
+
+---
+#!/usr/bin/env python3
+from pathlib import Path
+import csv
+
+BASE = Path("/home/MBEacherin/yeray/genomes_comparison/genetic_distance")
+IN_DIR = BASE / "tables"
+OUT = BASE / "tables" / "chromosome_mean_genetic_distance.tsv"
+
+FILES = [
+    "MED_vs_ATL_30kb.tsv",
+    "MED_vs_PAC_30kb.tsv",
+    "ATL_vs_PAC_30kb.tsv",
+]
+
+rows = []
+
+for fname in FILES:
+    path = IN_DIR / fname
+    sums = {}
+    counts = {}
+
+    with path.open() as fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        for r in reader:
+            comp = r["comparison"]
+            chrom = r["chromosome"]
+            gd = float(r["genetic_distance"])
+            key = (comp, chrom)
+
+            sums[key] = sums.get(key, 0.0) + gd
+            counts[key] = counts.get(key, 0) + 1
+
+    for (comp, chrom), total in sums.items():
+        mean_gd = total / counts[(comp, chrom)]
+        rows.append((comp, chrom, counts[(comp, chrom)], mean_gd))
+
+rows.sort()
+
+with OUT.open("w") as out:
+    out.write("comparison\tchromosome\tn_windows\tmean_genetic_distance\n")
+    for comp, chrom, nwin, mean_gd in rows:
+        out.write(f"{comp}\t{chrom}\t{nwin}\t{mean_gd:.8f}\n")
+
+print(f"[OK] wrote {OUT}")
+---
+
+python /home/MBEacherin/yeray/genomes_comparison/genetic_distance/scripts/make_chr_means.py
+
+# Now let's make the joint graph
+
+### 3) Visualization
+
+nano /home/MBEacherin/yeray/genomes_comparison/genetic_distance/scripts/plot_chr_mean_genetic_distance.R
+
+---
+library(ggplot2)
+library(readr)
+library(dplyr)
+
+GD <- "/home/MBEacherin/yeray/genomes_comparison/genetic_distance"
+
+df <- read_tsv(
+  file.path(GD, "tables", "chromosome_mean_genetic_distance.tsv"),
+  show_col_types = FALSE
+)
+
+# Ordre cromosòmic a partir dels .fai
+med_fai <- read_tsv(
+  "/home/MBEacherin/yeray/genomes/GCA_023653815.1_GSC_CCare_1.0_genomic.fna.fai",
+  col_names = FALSE,
+  show_col_types = FALSE
+) %>%
+  slice(1:28) %>%
+  transmute(chromosome = X1, chr_index = row_number())
+
+atl_fai <- read_tsv(
+  "/home/MBEacherin/yeray/genomes/GCA_965117115.1_CarCar_QM_v1.21.12_Sc_genomic.fna.fai",
+  col_names = FALSE,
+  show_col_types = FALSE
+) %>%
+  slice(1:28) %>%
+  transmute(chromosome = X1, chr_index = row_number())
+
+# MED_vs_ATL i MED_vs_PAC sobre MED; ATL_vs_PAC sobre ATL
+df2 <- bind_rows(
+  df %>%
+    filter(comparison %in% c("MED_vs_ATL", "MED_vs_PAC")) %>%
+    left_join(med_fai, by = "chromosome"),
+  df %>%
+    filter(comparison == "ATL_vs_PAC") %>%
+    left_join(atl_fai, by = "chromosome")
+) %>%
+  mutate(
+    comparison = factor(
+      comparison,
+      levels = c("MED_vs_ATL", "MED_vs_PAC", "ATL_vs_PAC"),
+      labels = c("MED vs ATL", "MED vs PAC", "ATL vs PAC")
+    ),
+    chr_index = as.numeric(chr_index)
+  )
+
+p <- ggplot(df2, aes(x = chr_index, y = mean_genetic_distance, color = comparison, group = comparison)) +
+  geom_line(linewidth = 0.45, alpha = 0.7) +
+  geom_point(size = 2.1) +
+  scale_x_continuous(
+    breaks = 1:28,
+    labels = 1:28,
+    limits = c(0.5, 28.5),
+    expand = c(0, 0)
+  ) +
+  coord_cartesian(
+    ylim = c(0, max(df2$mean_genetic_distance) * 1.03)
+  ) +
+  labs(
+    title = "Mean genetic distance per chromosome",
+    x = "Chromosome",
+    y = "Mean genetic distance",
+    color = "Genome comparison"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 18),
+    axis.title = element_text(),
+    axis.text.x = element_text(size = 7),
+    axis.text.y = element_text(size = 9),
+    axis.line = element_line(linewidth = 0.6, color = "black"),
+    axis.ticks = element_line(linewidth = 0.5, color = "black"),
+    legend.position = "right"
+  )
+
+ggsave(
+  file.path(GD, "plots", "chr_mean_genetic_distance_3comparisons_v2.png"),
+  p,
+  width = 9,
+  height = 4.8,
+  dpi = 300
+)
+---
+
+Rscript /home/MBEacherin/yeray/genomes_comparison/genetic_distance/scripts/plot_chr_mean_genetic_distance.R
+
+### 4) Detecting outliers + Rosner test
+
+---
+library(readr)
+library(dplyr)
+library(EnvStats)
+
+GD <- "/home/MBEacherin/yeray/genomes_comparison/genetic_distance"
+
+tables_dir <- file.path(GD, "tables")
+
+files <- c(
+  "MED_vs_ATL_30kb.tsv",
+  "MED_vs_PAC_30kb.tsv",
+  "ATL_vs_PAC_30kb.tsv"
+)
+
+all_outliers <- list()
+
+for (f in files) {
+
+  cat("\nProcessing", f, "\n")
+
+  df <- read_tsv(
+    file.path(tables_dir, f),
+    show_col_types = FALSE
+  )
+
+  comp <- unique(df$comparison)
+
+  df <- df %>%
+    mutate(
+      window_id = paste(chromosome, window_start, window_end, sep = "_")
+    )
+
+  x <- df$genetic_distance
+
+  mean_gd <- mean(x, na.rm = TRUE)
+  sd_gd <- sd(x, na.rm = TRUE)
+
+  q1 <- quantile(x, 0.25, na.rm = TRUE)
+  q3 <- quantile(x, 0.75, na.rm = TRUE)
+  iqr <- q3 - q1
+
+  p99 <- quantile(x, 0.99, na.rm = TRUE)
+  p995 <- quantile(x, 0.995, na.rm = TRUE)
+  p999 <- quantile(x, 0.999, na.rm = TRUE)
+
+  df <- df %>%
+    mutate(
+      outlier_2sd = genetic_distance > mean_gd + 2 * sd_gd,
+      outlier_3sd = genetic_distance > mean_gd + 3 * sd_gd,
+      outlier_iqr = genetic_distance > q3 + 1.5 * iqr,
+      outlier_p99 = genetic_distance >= p99,
+      outlier_p995 = genetic_distance >= p995,
+      outlier_p999 = genetic_distance >= p999
+    )
+
+  # Rosner test
+  clean_df <- df %>%
+    filter(!is.na(genetic_distance))
+
+  k_max <- min(1000, nrow(clean_df) - 2)
+
+  rosner <- rosnerTest(clean_df$genetic_distance, k = k_max)
+
+  rosner_rows <- rosner$all.stats$Obs.Num[
+    rosner$all.stats$Outlier
+  ]
+
+  clean_df$outlier_rosner <- FALSE
+  clean_df$outlier_rosner[rosner_rows] <- TRUE
+
+  df <- df %>%
+    left_join(
+      clean_df %>%
+        select(window_id, outlier_rosner),
+      by = "window_id"
+    ) %>%
+    mutate(
+      outlier_rosner = ifelse(is.na(outlier_rosner), FALSE, outlier_rosner)
+    )
+
+  out_full <- gsub(".tsv", "_with_outlier_tests.tsv", f)
+  out_only <- gsub(".tsv", "_outliers_only.tsv", f)
+
+  write_tsv(
+    df,
+    file.path(tables_dir, out_full)
+  )
+
+  outliers <- df %>%
+    filter(
+      outlier_2sd |
+        outlier_3sd |
+        outlier_iqr |
+        outlier_p99 |
+        outlier_p995 |
+        outlier_p999 |
+        outlier_rosner
+    )
+
+  write_tsv(
+    outliers,
+    file.path(tables_dir, out_only)
+  )
+
+  all_outliers[[comp]] <- outliers
+
+  cat("2SD:", sum(df$outlier_2sd), "\n")
+  cat("3SD:", sum(df$outlier_3sd), "\n")
+  cat("IQR:", sum(df$outlier_iqr), "\n")
+  cat("P99:", sum(df$outlier_p99), "\n")
+  cat("P99.5:", sum(df$outlier_p995), "\n")
+  cat("P99.9:", sum(df$outlier_p999), "\n")
+  cat("Rosner:", sum(df$outlier_rosner), "\n")
+}
+
+combined <- bind_rows(all_outliers)
+
+write_tsv(
+  combined,
+  file.path(tables_dir, "ALL_30kb_outliers_tests.tsv")
+)
+
+cat("\nDone. Combined outliers written to ALL_30kb_outliers_tests.tsv\n")
+---
+
+### 5) Venn diagram of outliers identified as significant by the Rosner test
+
+---
+library(readr)
+library(dplyr)
+library(VennDiagram)
+
+GD <- "/home/MBEacherin/yeray/genomes_comparison/genetic_distance"
+
+tables_dir <- file.path(GD, "tables")
+plots_dir <- file.path(GD, "plots")
+
+df <- read_tsv(
+  file.path(tables_dir, "ALL_30kb_outliers_tests.tsv"),
+  show_col_types = FALSE
+)
+
+criterion <- "outlier_rosner"
+
+venn_df <- df %>%
+  filter(.data[[criterion]] == TRUE) %>%
+  select(comparison, window_id) %>%
+  distinct()
+
+venn_list <- split(
+  venn_df$window_id,
+  venn_df$comparison
+)
+
+png(
+  file.path(plots_dir, paste0("Venn_30kb_", criterion, ".png")),
+  width = 3000,
+  height = 3000,
+  res = 300
+)
+
+venn.diagram(
+  x = venn_list,
+  filename = NULL,
+  fill = c("#fdf0d5", "#f4a261", "#e76f51"),
+  cat.fontface = "bold",
+  cex = 2.8,
+  cat.cex = 1.2,
+  cat.dist = c(0.05, 0.05, 0.08),
+  print.mode = "raw",
+  fontfamily = "serif",
+  fontface = "bold",
+  margin = 0.12
+)
+
+dev.off()
+
+cat("Done. Venn saved for criterion:", criterion, "\n")
+---
