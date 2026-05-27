@@ -18,27 +18,27 @@ Some commands are also intended to be executed directly in the Linux terminal wi
 
 ## Pipelines
 
-`how_to_mapping.txt`
+`how_to_mapping`
 
 Mapping of the 14 trimmed Caretta caretta samples against the Atlantic (RMU NEA) and Pacific (RMU NP) reference genomes, generating sorted BAM files.
 
-`how_to_genotyping.txt`
+`how_to_genotyping`
 
 Variant calling and genotyping workflow using the three reference genomes (Mediterranean, Atlantic, and Pacific). Includes VCF generation, filtering, and preparation for profile visualization to explore potential inversion regions.
 
-`how_to_Manta.txt`
+`how_to_Manta`
 
 Structural variant detection using Manta and SURVIVOR across the 14 samples mapped against the three assemblies.
 
-`how_to_COMPARISON_THREE_GENOMES_DOTPLOTS.txt`
+`how_to_COMPARISON_THREE_GENOMES_DOTPLOTS`
 
 Pairwise comparison of the three reference genomes through whole-genome alignments and dotplot generation to assess synteny.
 
-`how_to_COMPARISON_THREE_GENOMES_SYRI_PLOTSR.txt`
+`how_to_COMPARISON_THREE_GENOMES_SYRI_PLOTSR`
 
 Pairwise synteny and structural rearrangement analyses using Syri and plotsr to support dotplot-based observations.
 
-`how_to_COMPARISON_THREE_GENOMES_GENETIC_DISTANCE.txt`
+`how_to_COMPARISON_THREE_GENOMES_GENETIC_DISTANCE`
 
 Pairwise comparison of the three reference genomes to obtain a general overview of genetic distance patterns.
 
