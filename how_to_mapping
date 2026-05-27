@@ -1,0 +1,115 @@
+-------------------------- ######## HOW TO MAPPING ######### --------------------------
+
+--------------- ##### PIPELINE (Caretta caretta, 14 samples) ##### ---------------
+
+### 1) Indexing assemblies
+
+## First of all, we need to index the assmblies from the Atlantic and the Pacific (.fna)
+
+nano hisat_index.sh
+
+---
+#!/bin/bash
+
+#SBATCH --job-name=hisat_index
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=50G
+#SBATCH --output %x-%N-%j.log
+#SBATCH --error %x-%N-%j.err
+#SBATCH --partition=irbio01
+
+. /etc/profile
+module load anaconda/2024.02
+source activate MBEtools
+
+GENOME_DIR="/home/MBEacherin/yeray/genomes"
+
+N_CORES=1
+
+hisat2-build -p ${N_CORES} -f ${GENOME_DIR}/GCA_965117115.1_CarCar_QM_v1.21.12_Sc_genomic.fna ${GENOME_DIR}/genoma_caretta_index_ATL | \ 
+hisat2-build -p ${N_CORES} -f ${GENOME_DIR}/GCF_965140235.1_rCarCar1.hap1_genomic.fna ${GENOME_DIR}/genoma_caretta_index_PAC
+---
+
+### 2) Mapping
+
+## Starting from the trimmed samples, they must be mapped against the Atlantic and Pacific reference genomes using the following script
+
+nano make_mapping_job_Caretta.sh
+
+---
+#WARNING: modifiy the paths if needed
+
+#script to generate mappin jobs for paired end data (ex: WGS). To run it, connect to cluster, move to /piec1/scripts and write:
+
+
+DIR="/home/MBEacherin/yeray/trimmed_samples" #folder with the fasta files to map
+#in case you want to map few samples from a given folder, it can be created a temporary folder and create symbolic links for all the samples you aim to map.
+#example:
+#mkdir DIR/tmp
+#ln -s DIR/sample_*.fq DIR/tmp/
+GENOME_DIR="/home/MBEacherin/yeray/genomes" #folder that contains the genome
+MAPPING="/home/MBEacherin/yeray/mappingPAC" #folder to output the bam files
+
+N_CORES=10 #number the cores you aim to use
+
+rm -f batch_commands_mapping.sh
+
+echo "#!/bin/bash
+#SBATCH --job-name=make_mapping_job
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=10
+#SBATCH --mem=100G
+#SBATCH --output %x-%N-%j.log
+#SBATCH --error %x-%N-%j.err
+#SBATCH --partition=irbio01
+
+. /etc/profile
+module load anaconda/2024.02
+source activate MBEtools
+" > batch_commands_mapping.sh
+
+for file in ${DIR}/*_1P.fq.gz #PAIRED end
+do
+        withpath="${file}"
+        filename="${withpath##*/}"
+        base="${filename%_1P.fq.gz}"
+
+        echo "hisat2 -p ${N_CORES} -x ${GENOME_DIR}/genoma_caretta_index_PAC -1 ${DIR}/${base}_1P.fq.gz -2 ${DIR}/${base}_2P.fq.gz -S ${MAPPING}/${base}_mapping.sam --rg-id ${base} --rg SM:${base} > /home/MBEacherin/kkk.txt 2> ${MAPPING}/${base}_mapping.sam.info" >> batch_commands_mapping.sh
+        # /home/MBEacherin/kkk.txt is an empty file!! Do not modify it neither create a kkk.txt file.
+done
+---
+
+# We can do bash make_mapping_job_Caretta.sh. It creates a new script called batch_commands_mapping.sh and with this we can run the job 
+
+### 3) SAM to sortedBAM
+
+---
+#!/bin/bash
+
+#SBATCH --job-name=samtosortedbam
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=50G
+#SBATCH --output=%x-%N-%j.log
+#SBATCH --error=%x-%N-%j.err
+#SBATCH --partition=irbio01
+
+. /etc/profile
+module load anaconda/2024.02
+source activate MBEtools
+
+MAPPING="/home/MBEacherin/yeray/mappingATL"
+
+for file in ${MAPPING}/*.sam
+do
+        withpath="${file}"
+        filename=${withpath##*/}
+        base="${filename%.sam}"
+        samtools view -S -b ${MAPPING}/$filename > ${MAPPING}/${base}.bam
+        samtools sort -o /home/MBEacherin/yeray/sortedbamATL/${base}.sorted.bam ${MAPPING}/${base}.bam
+        #mv /home/usuaris/mpascual/${base}.sorted.bam ${MAPPING}
+done
+---
+
+# Now we have the sorted BAM files mapped against all assemblies
