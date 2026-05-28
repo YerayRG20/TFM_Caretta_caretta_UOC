@@ -30,15 +30,15 @@ Variant calling and genotyping workflow using the three reference genomes: Medit
 
 Structural variant detection using Manta and SURVIVOR across the 14 samples mapped against the three assemblies.
 
-`how_to_COMPARISON_THREE_GENOMES_DOTPLOTS`
+`how_to_three_genome_dotplots`
 
 Pairwise comparison of the three reference genomes through whole-genome alignments and dotplot generation to assess synteny.
 
-`how_to_COMPARISON_THREE_GENOMES_SYRI_PLOTSR`
+`how_to_three_genome_syri`
 
 Pairwise synteny and structural rearrangement analyses using Syri and plotsr to support dotplot-based observations.
 
-`how_to_COMPARISON_THREE_GENOMES_GENETIC_DISTANCE`
+`how_to_three_genome_genetic_distance`
 
 Pairwise comparison of the three reference genomes to obtain a general overview of genetic distance patterns.
 
