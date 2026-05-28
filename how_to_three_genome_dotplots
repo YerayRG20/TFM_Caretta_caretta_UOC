@@ -1,0 +1,906 @@
+-------------------------- ######## HOW TO THREE GENOME DOTPLOTS ######### --------------------------
+
+--------------- ##### PIPELINE (Caretta caretta, 3 assemblies) ##### ---------------
+
+### 0) Install minimap2
+
+conda install -c bioconda -c conda-forge minimap2 -y
+
+# To verify that everything is correct
+
+which minimap2
+
+minimap2 --version
+
+### 1) structural comparison of genomes as in Yen's paper: genome-genome alignments and dotplots
+
+## Defining variables
+
+MED=/home/MBEacherin/yeray/genomes/GCA_023653815.1_GSC_CCare_1.0_genomic.fna
+ATL=/home/MBEacherin/yeray/genomes/GCA_965117115.1_CarCar_QM_v1.21.12_Sc_genomic.fna
+PAC=/home/MBEacherin/yeray/genomes/GCF_965140235.1_rCarCar1.hap1_genomic.fna
+DOT=/home/MBEacherin/yeray/genomes_comparison/dotplots
+
+mkdir -p "$DOT"/{paf,logs}
+
+## Generating the 3 alignments for dotplot
+
+# We will use asm5 and add --eqx, which can then be useful for visualization or conversion
+
+minimap2 -x asm5 --eqx -t 16 "$MED" "$ATL" > "$DOT/paf/MED_vs_ATL.dotplot.paf" 2> "$DOT/logs/MED_vs_ATL.dotplot.log"
+
+minimap2 -x asm5 --eqx -t 16 "$MED" "$PAC" > "$DOT/paf/MED_vs_PAC.dotplot.paf" 2> "$DOT/logs/MED_vs_PAC.dotplot.log"
+
+minimap2 -x asm5 --eqx -t 16 "$ATL" "$PAC" > "$DOT/paf/ATL_vs_PAC.dotplot.paf" 2> "$DOT/logs/ATL_vs_PAC.dotplot.log"
+
+# To verify that everything is correct
+
+ls -lh "$DOT/paf"
+tail -n 5 "$DOT/logs/MED_vs_ATL.dotplot.log"
+tail -n 5 "$DOT/logs/MED_vs_PAC.dotplot.log"
+tail -n 5 "$DOT/logs/ATL_vs_PAC.dotplot.log"
+
+### 2) Filtrating PAF: MED vs ATL
+
+DOT=/home/MBEacherin/yeray/genomes_comparison/dotplots
+
+mkdir -p "$DOT/tsv"
+
+## Filtrating the PAF
+
+# We are left with:
+- tp:A:P → primary alignments
+- aln_len >= 100000 → at least 100 kb
+- mapq >= 20 → decent quality
+
+awk 'BEGIN{FS=OFS="\t"}
+{
+  tp=""; 
+  for(i=13;i<=NF;i++){
+    if($i=="tp:A:P"){tp="P"}
+  }
+  aln_len=$11
+  mapq=$12
+  if(tp=="P" && aln_len>=100000 && mapq>=20){
+    print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12
+  }
+}' "$DOT/paf/MED_vs_ATL.dotplot.paf" > "$DOT/tsv/MED_vs_ATL.filtered.tsv"
+
+# To verify that everything is correct
+
+wc -l "$DOT/tsv/MED_vs_ATL.filtered.tsv"
+head -n 10 "$DOT/tsv/MED_vs_ATL.filtered.tsv"
+
+### 3) Dotplot MED vs ATL
+
+nano "$DOT/plot_dotplot_MED_vs_ATL.R"
+
+---
+library(ggplot2)
+library(readr)
+library(dplyr)
+
+# Llegir dades
+df <- read_tsv("/home/MBEacherin/yeray/genomes_comparison/dotplots/tsv/MED_vs_ATL.filtered.tsv",
+               col_names = FALSE)
+
+# Assignar noms
+colnames(df) <- c("query_chr","query_len","query_start","query_end",
+                  "strand",
+                  "target_chr","target_len","target_start","target_end",
+                  "nmatch","alen","mapq")
+
+# Crear punts centrals de cada alineament
+df <- df %>%
+  mutate(
+    query_mid = (query_start + query_end)/2,
+    target_mid = (target_start + target_end)/2
+  )
+
+# Plot
+p <- ggplot(df, aes(x = query_mid, y = target_mid)) +
+  geom_point(alpha = 0.5, size = 1) +
+  labs(title = "Dotplot MED vs ATL",
+       x = "MED genome position",
+       y = "ATL genome position") +
+  theme_bw() +
+  theme(
+    strip.text = element_text(size = 6),
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  )
+
+# Guardar
+ggsave("/home/MBEacherin/yeray/genomes_comparison/dotplots/MED_vs_ATL_dotplot.png",
+       p, width = 10, height = 10, dpi = 300)
+---
+
+Rscript "$DOT/plot_dotplot_MED_vs_ATL.R"
+
+# Let's transform MED vs ATL to look much more like Yen's: axes = chromosomes 1–28, separation lines between chromosomes, color by approximate identity, only the useful signal
+
+DOT=/home/MBEacherin/yeray/genomes_comparison/dotplots
+
+awk 'BEGIN{FS=OFS="\t"}
+{
+  tp="";
+  for(i=13;i<=NF;i++){
+    if($i=="tp:A:P"){tp="P"}
+  }
+  if(tp=="P" && $11>=100000 && $12>=20){
+    print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12
+  }
+}' "$DOT/paf/MED_vs_ATL.dotplot.paf" > "$DOT/tsv/MED_vs_ATL.filtered.tsv"
+
+nano plot_dotplot_MED_vs_ATL_chr.R
+
+---
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(stringr)
+
+dot <- read_tsv("/home/MBEacherin/yeray/genomes_comparison/dotplots/tsv/MED_vs_ATL.filtered.tsv",
+                col_names = FALSE, show_col_types = FALSE)
+
+colnames(dot) <- c("qname","qlen","qstart","qend","strand",
+                   "tname","tlen","tstart","tend","nmatch","alen","mapq")
+
+# Parse chromosome numbers from names like OZ220763.1 / CM042760.1
+dot <- dot %>%
+  mutate(
+    qchr = as.integer(str_extract(qname, "(?<=\\D)\\d+(?=\\.1$)")),
+    tchr = as.integer(str_extract(tname, "(?<=\\D)\\d+(?=\\.1$)"))
+  )
+
+# Re-rank to 1..28 by chromosome size order within each assembly
+# Keep only the 28 main chromosomes by chromosome length rank
+q_levels <- dot %>%
+  distinct(qname, qlen) %>%
+  arrange(desc(qlen)) %>%
+  slice(1:28) %>%
+  mutate(qrank = row_number())
+
+t_levels <- dot %>%
+  distinct(tname, tlen) %>%
+  arrange(desc(tlen)) %>%
+  slice(1:28) %>%
+  mutate(trank = row_number())
+
+dot <- dot %>%
+  left_join(q_levels, by = c("qname","qlen")) %>%
+  left_join(t_levels, by = c("tname","tlen")) %>%
+  filter(!is.na(qrank), !is.na(trank)) %>%
+  mutate(
+    pid = 100 * nmatch / alen,
+    pid_class = case_when(
+      pid < 25 ~ "<25%",
+      pid < 50 ~ "25-50%",
+      pid < 75 ~ "50-75%",
+      TRUE ~ ">75%"
+    ),
+    qmid = (qstart + qend) / 2,
+    tmid = (tstart + tend) / 2
+  )
+
+# chromosome boundaries for grid
+q_bounds <- q_levels %>% arrange(qrank) %>% mutate(x = qrank)
+t_bounds <- t_levels %>% arrange(trank) %>% mutate(y = trank)
+
+p <- ggplot(dot, aes(x = qrank, y = trank, color = pid_class)) +
+  geom_point(size = 2, alpha = 0.8) +
+  scale_x_continuous(
+  breaks = 1:28,
+  labels = 1:28,
+  expand = c(0, 0)
+) +
+scale_y_continuous(
+  breaks = 1:28,
+  labels = 1:28,
+  expand = c(0, 0)
+  ) +
+  scale_color_manual(
+  values = c("<25%" = "#f1c27d",
+             "25-50%" = "#d08c3f",
+             "50-75%" = "#4f81bd",
+             ">75%" = "black"),
+  breaks = c("<25%", "25-50%", "50-75%", ">75%"),
+  drop = FALSE
+  ) +
+  geom_vline(xintercept = seq(0.5, 28.5, by = 1), color = "grey80", linewidth = 0.3) +
+  geom_hline(yintercept = seq(0.5, 28.5, by = 1), color = "grey80", linewidth = 0.3) +
+  coord_fixed() +
+  labs(
+    title = "Whole-genome alignment dot plot: MED vs ATL",
+    x = "MED genome chromosome",
+    y = "ATL genome chromosome",
+    color = NULL
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 0),
+    plot.title = element_text(face = "bold")
+  )
+
+ggsave("/home/MBEacherin/yeray/genomes_comparison/dotplots/MED_vs_ATL_dotplot_chr.png",
+       p, width = 7, height = 7, dpi = 300)
+---
+
+Rscript "$DOT/plot_dotplot_MED_vs_ATL_chr.R"
+
+# To verify that everything is correct
+
+ls -lh "$DOT"/MED_vs_ATL_dotplot_chr.png
+
+# We are drawing one point per alignment (the midpoint of each block), while on paper what is seen is the effect of many blocks/alignments distributed along the chromosomes, and that is why a much more continuous diagonal emerges. Therefore, what is missing is not to artificially join points with a line, but to represent the aligned blocks as segments, not as points.
+
+nano /home/MBEacherin/yeray/genomes_comparison/dotplots/plot_dotplot_MED_vs_ATL_concat.R
+
+---
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(tidyr)
+
+DOT <- "/home/MBEacherin/yeray/genomes_comparison/dotplots"
+
+# -----------------------------
+# 1. Read filtered PAF table
+# -----------------------------
+dot <- read_tsv(
+  file.path(DOT, "tsv", "MED_vs_ATL.filtered.tsv"),
+  col_names = FALSE,
+  show_col_types = FALSE
+)
+
+colnames(dot) <- c(
+  "qname","qlen","qstart","qend","strand",
+  "tname","tlen","tstart","tend",
+  "nmatch","alen","mapq"
+)
+
+# -----------------------------
+# 2. Read first 28 chromosomes from each genome
+# -----------------------------
+med_fai <- read_tsv(
+  "/home/MBEacherin/yeray/genomes/GCA_023653815.1_GSC_CCare_1.0_genomic.fna.fai",
+  col_names = FALSE,
+  show_col_types = FALSE
+) %>%
+  slice(1:28) %>%
+  transmute(chr = X1, chr_len = X2, chr_rank = row_number())
+
+atl_fai <- read_tsv(
+  "/home/MBEacherin/yeray/genomes/GCA_965117115.1_CarCar_QM_v1.21.12_Sc_genomic.fna.fai",
+  col_names = FALSE,
+  show_col_types = FALSE
+) %>%
+  slice(1:28) %>%
+  transmute(chr = X1, chr_len = X2)
+
+# provisional mapping table to infer ATL order from strongest alignment to MED
+atl_order <- dot %>%
+  inner_join(
+    med_fai %>% select(chr, chr_rank),
+    by = c("tname" = "chr")
+  ) %>%
+  group_by(qname, chr_rank) %>%
+  summarise(total_aln = sum(alen), .groups = "drop") %>%
+  group_by(qname) %>%
+  slice_max(order_by = total_aln, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  arrange(chr_rank)
+
+# assign ATL chromosome ranks based on best-hit MED chromosome order
+atl_fai <- atl_fai %>%
+  left_join(atl_order %>% select(qname, chr_rank), by = c("chr" = "qname")) %>%
+  arrange(chr_rank, desc(chr_len)) %>%
+  mutate(chr_rank = row_number())
+
+# cumulative offsets
+med_fai <- med_fai %>%
+  mutate(offset = lag(cumsum(chr_len), default = 0))
+
+atl_fai <- atl_fai %>%
+  mutate(offset = lag(cumsum(chr_len), default = 0))
+
+# -----------------------------
+# 3. Keep only alignments involving the 28 main chromosomes
+# -----------------------------
+dot2 <- dot %>%
+  inner_join(med_fai, by = c("tname" = "chr")) %>%
+  rename(t_chr_len_main = chr_len, t_chr_rank = chr_rank, t_offset = offset) %>%
+  inner_join(atl_fai, by = c("qname" = "chr")) %>%
+  rename(q_chr_len_main = chr_len, q_chr_rank = chr_rank, q_offset = offset)
+
+# -----------------------------
+# 4. Compute cumulative genomic coordinates
+# -----------------------------
+dot2 <- dot2 %>%
+  mutate(
+    # x axis = MED (target in minimap2 call)
+    x_start = t_offset + tstart,
+    x_end   = t_offset + tend,
+
+    # y axis = ATL (query in minimap2 call)
+    y_start = ifelse(strand == "+", q_offset + qstart, q_offset + qend),
+    y_end   = ifelse(strand == "+", q_offset + qend,   q_offset + qstart),
+
+    pid = 100 * nmatch / alen,
+    pid_class = case_when(
+      pid < 25 ~ "<25%",
+      pid < 50 ~ "25-50%",
+      pid < 75 ~ "50-75%",
+      TRUE ~ ">75%"
+    )
+  )
+
+# -----------------------------
+# 5. Chromosome boundaries and labels
+# -----------------------------
+med_bounds <- med_fai %>%
+  mutate(boundary = offset,
+         midpoint = offset + chr_len / 2)
+
+atl_bounds <- atl_fai %>%
+  mutate(boundary = offset,
+         midpoint = offset + chr_len / 2)
+
+med_end <- max(med_fai$offset + med_fai$chr_len)
+atl_end <- max(atl_fai$offset + atl_fai$chr_len)
+
+# -----------------------------
+# 6. Plot segments (paper-like)
+# -----------------------------
+p <- ggplot(dot2) +
+  geom_segment(
+    aes(
+      x = x_start, xend = x_end,
+      y = y_start, yend = y_end,
+      color = pid_class
+    ),
+    linewidth = 0.5,
+    alpha = 0.9
+  ) +
+  geom_vline(
+    data = med_bounds,
+    aes(xintercept = boundary),
+    color = "grey85",
+    linewidth = 0.3
+  ) +
+  geom_hline(
+    data = atl_bounds,
+    aes(yintercept = boundary),
+    color = "grey85",
+    linewidth = 0.3
+  ) +
+  scale_x_continuous(
+  breaks = c(med_bounds$midpoint[1:11], mean(range(med_bounds$midpoint[12:28]))),
+  labels = c(as.character(1:11), "12-28"),
+  expand = c(0, 0)
+) +
+scale_y_continuous(
+  breaks = c(atl_bounds$midpoint[1:11], mean(range(atl_bounds$midpoint[12:28]))),
+  labels = c(as.character(1:11), "12-28"),
+  expand = c(0, 0)
+  ) +
+  scale_color_manual(
+    values = c(
+      "<25%" = "#f1c27d",
+      "25-50%" = "#d08c3f",
+      "50-75%" = "#4f81bd",
+      ">75%" = "black"
+    ),
+    breaks = c("<25%", "25-50%", "50-75%", ">75%"),
+    drop = FALSE
+  ) +
+  coord_fixed() +
+  labs(
+    x = "MED genome chromosome",
+    y = "NEA genome chromosome",
+    color = NULL
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 8),
+    axis.text.y = element_text(size = 8)
+  )
+
+ggsave(
+  file.path(DOT, "MED_vs_ATL_dotplot_concat.png"),
+  p,
+  width = 7.5,
+  height = 7.5,
+  dpi = 300
+)
+---
+
+Rscript /home/MBEacherin/yeray/genomes_comparison/dotplots/plot_dotplot_MED_vs_ATL_concat.R
+
+# The next natural step is to replicate this exact same pipeline for: MED vs PAC, ATL vs PAC
+
+# 4) Filtrating PAF: MED vs PAC
+
+DOT=/home/MBEacherin/yeray/genomes_comparison/dotplots
+
+awk 'BEGIN{FS=OFS="\t"}
+{
+  tp="";
+  for(i=13;i<=NF;i++){
+    if($i=="tp:A:P"){tp="P"}
+  }
+  aln_len=$11
+  mapq=$12
+  if(tp=="P" && aln_len>=100000 && mapq>=20){
+    print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12
+  }
+}' "$DOT/paf/MED_vs_PAC.dotplot.paf" > "$DOT/tsv/MED_vs_PAC.filtered.tsv"
+
+# 5) Concatenated dotplot: MED vs PAC
+
+nano /home/MBEacherin/yeray/genomes_comparison/dotplots/plot_dotplot_MED_vs_PAC_concat.R
+
+---
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(tidyr)
+
+DOT <- "/home/MBEacherin/yeray/genomes_comparison/dotplots"
+
+dot <- read_tsv(
+  file.path(DOT, "tsv", "MED_vs_PAC.filtered.tsv"),
+  col_names = FALSE,
+  show_col_types = FALSE
+)
+
+colnames(dot) <- c(
+  "qname","qlen","qstart","qend","strand",
+  "tname","tlen","tstart","tend",
+  "nmatch","alen","mapq"
+)
+
+med_fai <- read_tsv(
+  "/home/MBEacherin/yeray/genomes/GCA_023653815.1_GSC_CCare_1.0_genomic.fna.fai",
+  col_names = FALSE,
+  show_col_types = FALSE
+) %>%
+  slice(1:28) %>%
+  transmute(chr = X1, chr_len = X2, chr_rank = row_number())
+
+pac_fai_raw <- read_tsv(
+  "/home/MBEacherin/yeray/genomes/GCF_965140235.1_rCarCar1.hap1_genomic.fna.fai",
+  col_names = FALSE,
+  show_col_types = FALSE
+) %>%
+  slice(1:28) %>%
+  transmute(chr = X1, chr_len = X2)
+
+# 1. Assignar cada cromosoma PAC al cromosoma MED amb què alinea més
+pac_order <- dot %>%
+  inner_join(
+    med_fai %>% select(chr, chr_rank),
+    by = c("tname" = "chr")
+  ) %>%
+  group_by(qname, chr_rank) %>%
+  summarise(total_aln = sum(alen), .groups = "drop") %>%
+  group_by(qname) %>%
+  slice_max(order_by = total_aln, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  arrange(chr_rank)
+
+# 2. Orientació dominant de cada cromosoma PAC respecte MED
+pac_orientation <- dot %>%
+  inner_join(
+    pac_order %>% select(qname, chr_rank),
+    by = "qname"
+  ) %>%
+  group_by(qname) %>%
+  summarise(
+    plus_aln  = sum(alen[strand == "+"], na.rm = TRUE),
+    minus_aln = sum(alen[strand == "-"], na.rm = TRUE),
+    orientation = ifelse(minus_aln > plus_aln, "-", "+"),
+    .groups = "drop"
+  )
+
+# 3. Taula final PAC ordenada i amb orientació
+pac_fai <- pac_fai_raw %>%
+  left_join(pac_order %>% select(qname, chr_rank), by = c("chr" = "qname")) %>%
+  left_join(pac_orientation %>% select(qname, orientation), by = c("chr" = "qname")) %>%
+  filter(!is.na(chr_rank)) %>%
+  arrange(chr_rank) %>%
+  mutate(
+    chr_rank = row_number(),
+    orientation = ifelse(is.na(orientation), "+", orientation)
+  )
+
+# 4. Offsets acumulats
+med_fai <- med_fai %>%
+  mutate(offset = lag(cumsum(chr_len), default = 0))
+
+pac_fai <- pac_fai %>%
+  mutate(offset = lag(cumsum(chr_len), default = 0))
+
+# 5. Afegir coordenades acumulades
+dot2 <- dot %>%
+  inner_join(med_fai, by = c("tname" = "chr")) %>%
+  rename(
+    t_chr_len_main = chr_len,
+    t_chr_rank = chr_rank,
+    t_offset = offset
+  ) %>%
+  inner_join(pac_fai, by = c("qname" = "chr")) %>%
+  rename(
+    q_chr_len_main = chr_len,
+    q_chr_rank = chr_rank,
+    q_offset = offset,
+    q_orientation = orientation
+  ) %>%
+  mutate(
+    x_start = t_offset + tstart,
+    x_end   = t_offset + tend,
+
+    # IMPORTANT:
+    # Si el cromosoma PAC està invertit respecte MED,
+    # girem les coordenades del cromosoma sencer.
+    y_start = ifelse(
+      q_orientation == "+",
+      q_offset + qstart,
+      q_offset + (q_chr_len_main - qend)
+    ),
+    y_end = ifelse(
+      q_orientation == "+",
+      q_offset + qend,
+      q_offset + (q_chr_len_main - qstart)
+    ),
+
+    pid = 100 * nmatch / alen,
+    pid_class = case_when(
+      pid < 25 ~ "<25%",
+      pid < 50 ~ "25-50%",
+      pid < 75 ~ "50-75%",
+      TRUE ~ ">75%"
+    )
+  )
+
+# Debug útil
+print(table(dot2$q_orientation, useNA = "ifany"))
+
+med_bounds <- med_fai %>%
+  mutate(
+    boundary = offset,
+    midpoint = offset + chr_len / 2
+  )
+
+pac_bounds <- pac_fai %>%
+  mutate(
+    boundary = offset,
+    midpoint = offset + chr_len / 2
+  )
+
+p <- ggplot(dot2) +
+  geom_segment(
+    aes(
+      x = x_start, xend = x_end,
+      y = y_start, yend = y_end,
+      color = pid_class
+    ),
+    linewidth = 0.5,
+    alpha = 0.9
+  ) +
+  geom_vline(
+    data = med_bounds,
+    aes(xintercept = boundary),
+    color = "grey85",
+    linewidth = 0.3
+  ) +
+  geom_hline(
+    data = pac_bounds,
+    aes(yintercept = boundary),
+    color = "grey85",
+    linewidth = 0.3
+  ) +
+  scale_x_continuous(
+    breaks = c(med_bounds$midpoint[1:11], mean(range(med_bounds$midpoint[12:28]))),
+    labels = c(as.character(1:11), "12-28"),
+    expand = c(0, 0)
+  ) +
+  scale_y_continuous(
+    breaks = c(pac_bounds$midpoint[1:11], mean(range(pac_bounds$midpoint[12:28]))),
+    labels = c(as.character(1:11), "12-28"),
+    expand = c(0, 0)
+  ) +
+  scale_color_manual(
+    values = c(
+      "<25%" = "#f1c27d",
+      "25-50%" = "#d08c3f",
+      "50-75%" = "#4f81bd",
+      ">75%" = "black"
+    ),
+    breaks = c("<25%", "25-50%", "50-75%", ">75%"),
+    drop = FALSE
+  ) +
+  coord_fixed() +
+  labs(
+    x = "MED genome chromosome",
+    y = "NP genome chromosome",
+    color = NULL
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 8),
+    axis.text.y = element_text(size = 8)
+  )
+
+ggsave(
+  file.path(DOT, "MED_vs_PAC_dotplot_concat_oriented.png"),
+  p,
+  width = 7.5,
+  height = 7.5,
+  dpi = 300
+)
+---
+
+Rscript /home/MBEacherin/yeray/genomes_comparison/dotplots/plot_dotplot_MED_vs_PAC_concat.R
+
+# To verify that everything is correct
+
+ls -lh "$DOT"/MED_vs_PAC_dotplot_concat.png
+
+# 6) Filtrating PAF: ATL vs PAC
+
+DOT=/home/MBEacherin/yeray/genomes_comparison/dotplots
+
+awk 'BEGIN{FS=OFS="\t"}
+{
+  tp="";
+  for(i=13;i<=NF;i++){
+    if($i=="tp:A:P"){tp="P"}
+  }
+  aln_len=$11
+  mapq=$12
+  if(tp=="P" && aln_len>=100000 && mapq>=20){
+    print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12
+  }
+}' "$DOT/paf/ATL_vs_PAC.dotplot.paf" > "$DOT/tsv/ATL_vs_PAC.filtered.tsv"
+
+# 7) Concatenated dotplot: ATL vs PAC
+
+nano /home/MBEacherin/yeray/genomes_comparison/dotplots/plot_dotplot_ATL_vs_PAC_concat.R
+
+---
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(tidyr)
+
+DOT <- "/home/MBEacherin/yeray/genomes_comparison/dotplots"
+
+dot <- read_tsv(
+  file.path(DOT, "tsv", "ATL_vs_PAC.filtered.tsv"),
+  col_names = FALSE,
+  show_col_types = FALSE
+)
+
+colnames(dot) <- c(
+  "qname","qlen","qstart","qend","strand",
+  "tname","tlen","tstart","tend",
+  "nmatch","alen","mapq"
+)
+
+atl_fai <- read_tsv(
+  "/home/MBEacherin/yeray/genomes/GCA_965117115.1_CarCar_QM_v1.21.12_Sc_genomic.fna.fai",
+  col_names = FALSE,
+  show_col_types = FALSE
+) %>%
+  slice(1:28) %>%
+  transmute(chr = X1, chr_len = X2)
+
+dot_med_atl <- read_tsv(
+  file.path(DOT, "tsv", "MED_vs_ATL.filtered.tsv"),
+  col_names = FALSE,
+  show_col_types = FALSE
+)
+
+colnames(dot_med_atl) <- c(
+  "qname","qlen","qstart","qend","strand",
+  "tname","tlen","tstart","tend",
+  "nmatch","alen","mapq"
+)
+
+med_fai_ref <- read_tsv(
+  "/home/MBEacherin/yeray/genomes/GCA_023653815.1_GSC_CCare_1.0_genomic.fna.fai",
+  col_names = FALSE,
+  show_col_types = FALSE
+) %>%
+  slice(1:28) %>%
+  transmute(chr = X1, chr_len = X2, chr_rank = row_number())
+
+atl_order_ref <- dot_med_atl %>%
+  inner_join(
+    med_fai_ref %>% select(chr, chr_rank),
+    by = c("tname" = "chr")
+  ) %>%
+  group_by(qname, chr_rank) %>%
+  summarise(total_aln = sum(alen), .groups = "drop") %>%
+  group_by(qname) %>%
+  slice_max(order_by = total_aln, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  arrange(chr_rank)
+
+atl_fai <- atl_fai %>%
+  left_join(atl_order_ref %>% select(qname, chr_rank), by = c("chr" = "qname")) %>%
+  filter(!is.na(chr_rank)) %>%
+  arrange(chr_rank) %>%
+  mutate(chr_rank = row_number())
+
+pac_fai_raw <- read_tsv(
+  "/home/MBEacherin/yeray/genomes/GCF_965140235.1_rCarCar1.hap1_genomic.fna.fai",
+  col_names = FALSE,
+  show_col_types = FALSE
+) %>%
+  slice(1:28) %>%
+  transmute(chr = X1, chr_len = X2)
+
+pac_order <- dot %>%
+  inner_join(
+    atl_fai %>% select(chr, chr_rank),
+    by = c("tname" = "chr")
+  ) %>%
+  group_by(qname, chr_rank) %>%
+  summarise(total_aln = sum(alen), .groups = "drop") %>%
+  group_by(qname) %>%
+  slice_max(order_by = total_aln, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  arrange(chr_rank)
+
+pac_orientation <- dot %>%
+  inner_join(
+    pac_order %>% select(qname, chr_rank),
+    by = "qname"
+  ) %>%
+  group_by(qname) %>%
+  summarise(
+    plus_aln  = sum(alen[strand == "+"], na.rm = TRUE),
+    minus_aln = sum(alen[strand == "-"], na.rm = TRUE),
+    orientation = ifelse(minus_aln > plus_aln, "-", "+"),
+    .groups = "drop"
+  )
+
+pac_fai <- pac_fai_raw %>%
+  left_join(pac_order %>% select(qname, chr_rank), by = c("chr" = "qname")) %>%
+  left_join(pac_orientation %>% select(qname, orientation), by = c("chr" = "qname")) %>%
+  filter(!is.na(chr_rank)) %>%
+  arrange(chr_rank) %>%
+  mutate(
+    chr_rank = row_number(),
+    orientation = ifelse(is.na(orientation), "+", orientation)
+  )
+
+atl_fai <- atl_fai %>%
+  mutate(offset = lag(cumsum(chr_len), default = 0))
+
+pac_fai <- pac_fai %>%
+  mutate(offset = lag(cumsum(chr_len), default = 0))
+
+dot2 <- dot %>%
+  inner_join(atl_fai, by = c("tname" = "chr")) %>%
+  rename(
+    t_chr_len_main = chr_len,
+    t_chr_rank = chr_rank,
+    t_offset = offset
+  ) %>%
+  inner_join(pac_fai, by = c("qname" = "chr")) %>%
+  rename(
+    q_chr_len_main = chr_len,
+    q_chr_rank = chr_rank,
+    q_offset = offset,
+    q_orientation = orientation
+  ) %>%
+  mutate(
+    x_start = t_offset + tstart,
+    x_end   = t_offset + tend,
+
+    y_start = ifelse(
+      q_orientation == "+",
+      q_offset + qstart,
+      q_offset + (q_chr_len_main - qend)
+    ),
+
+    y_end = ifelse(
+      q_orientation == "+",
+      q_offset + qend,
+      q_offset + (q_chr_len_main - qstart)
+    ),
+
+    pid = 100 * nmatch / alen,
+    pid_class = case_when(
+      pid < 25 ~ "<25%",
+      pid < 50 ~ "25-50%",
+      pid < 75 ~ "50-75%",
+      TRUE ~ ">75%"
+    )
+  )
+
+print(table(dot2$q_orientation, useNA = "ifany"))
+
+atl_bounds <- atl_fai %>%
+  mutate(
+    boundary = offset,
+    midpoint = offset + chr_len / 2
+  )
+
+pac_bounds <- pac_fai %>%
+  mutate(
+    boundary = offset,
+    midpoint = offset + chr_len / 2
+  )
+
+p <- ggplot(dot2) +
+  geom_segment(
+    aes(
+      x = x_start, xend = x_end,
+      y = y_start, yend = y_end,
+      color = pid_class
+    ),
+    linewidth = 0.5,
+    alpha = 0.9
+  ) +
+  geom_vline(
+    data = atl_bounds,
+    aes(xintercept = boundary),
+    color = "grey85",
+    linewidth = 0.3
+  ) +
+  geom_hline(
+    data = pac_bounds,
+    aes(yintercept = boundary),
+    color = "grey85",
+    linewidth = 0.3
+  ) +
+  scale_x_continuous(
+    breaks = c(atl_bounds$midpoint[1:11], mean(range(atl_bounds$midpoint[12:28]))),
+    labels = c(as.character(1:11), "12-28"),
+    expand = c(0, 0)
+  ) +
+  scale_y_continuous(
+    breaks = c(pac_bounds$midpoint[1:11], mean(range(pac_bounds$midpoint[12:28]))),
+    labels = c(as.character(1:11), "12-28"),
+    expand = c(0, 0)
+  ) +
+  scale_color_manual(
+    values = c(
+      "<25%" = "#f1c27d",
+      "25-50%" = "#d08c3f",
+      "50-75%" = "#4f81bd",
+      ">75%" = "black"
+    ),
+    breaks = c("<25%", "25-50%", "50-75%", ">75%"),
+    drop = FALSE
+  ) +
+  coord_fixed() +
+  labs(
+    x = "NEA genome chromosome",
+    y = "NP genome chromosome",
+    color = NULL
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 8),
+    axis.text.y = element_text(size = 8)
+  )
+
+ggsave(
+  file.path(DOT, "ATL_vs_PAC_dotplot_concat_oriented.png"),
+  p,
+  width = 7.5,
+  height = 7.5,
+  dpi = 300
+)
+---
+
+Rscript /home/MBEacherin/yeray/genomes_comparison/dotplots/plot_dotplot_ATL_vs_PAC_concat.R
