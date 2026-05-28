@@ -299,6 +299,8 @@ Rscript /home/MBEacherin/yeray/genomes_comparison/genetic_distance/scripts/plot_
 
 ### 4) Detecting outliers + Rosner test
 
+nano detect_outliers_30kb.R
+
 ---
 library(readr)
 library(dplyr)
@@ -425,7 +427,11 @@ write_tsv(
 cat("\nDone. Combined outliers written to ALL_30kb_outliers_tests.tsv\n")
 ---
 
+Rscript /home/MBEacherin/yeray/genomes_comparison/genetic_distance/scripts/detect_outliers_30kb.R
+
 ### 5) Venn diagram of outliers identified as significant by the Rosner test
+
+nano plot_venn_outliers_rosner_30kb.R
 
 ---
 library(readr)
@@ -479,3 +485,5 @@ dev.off()
 
 cat("Done. Venn saved for criterion:", criterion, "\n")
 ---
+
+Rscript /home/MBEacherin/yeray/genomes_comparison/genetic_distance/scripts/plot_venn_outliers_rosner_30kb.R
