@@ -42,7 +42,17 @@ Pairwise synteny and structural rearrangement analyses using Syri and plotsr to 
 
 Pairwise comparison of the three reference genomes to obtain a general overview of genetic distance patterns.
 
-## Softwares used
+## Supplementary figures
+
+The repository also includes a `supplementary_figures/` folder containing complete chromosome-by-chromosome homozygosity profile visualizations generated for the three reference assemblies:
+
+- Mediterranean (MED)
+- Atlantic (NEA)
+- Pacific (NP)
+
+These PDF files were used for exploratory visualization of potential inversion-related patterns across the different assemblies and are provided as supplementary material due to their large size.
+
+## Software used
 - minimap2
 - samtools
 - bcftools
