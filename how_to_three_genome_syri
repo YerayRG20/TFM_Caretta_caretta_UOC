@@ -1,0 +1,636 @@
+-------------------------- ######## HOW TO THREE GENOME SYRI ######### --------------------------
+
+--------------- ##### PIPELINE (Caretta caretta, 3 assemblies) ##### ---------------
+
+# This pipeline provides an additional approach to evaluate synteny among the three Caretta caretta reference genomes, complementing and supporting the pairwise dotplot analyses through structural rearrangement and synteny visualization methods
+
+### 1) Custom Python script used to generate ribbon-based synteny visualizations from SyRI outputs, highlighting conserved syntenic regions and genomic rearrangements between pairwise genome comparisons
+
+nano plot_syri_synteny.py
+
+---
+        #!/usr/bin/env python3
+
+import argparse
+import sys
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.path import Path
+import matplotlib.patches as patches
+
+# ── Variant colours ──────────────────────────────────────────────────────────
+# Maps canonical type → colour. AL-suffix variants are normalised to canonical.
+COLORS = {
+    "SYN"   : "#B8B8B8",   # synteny – grey
+    "REARR" : "#FF4500",   # rearrangements – same as old inversion
+}
+
+GENOME_COLORS = {
+    "NEA": "#4999B6",
+    "MED": "#FFD93D",
+    "NP" : "#ACACA7",
+}
+
+# Map every SyRI tag (including AL variants) to a canonical type
+TAG_TO_CANONICAL = {
+    "SYN"    : "SYN",
+    "SYNAL"  : "SYN",
+    "INV"    : "REARR",
+    "INVAL"  : "REARR",
+    "TRANS"  : "REARR",
+    "TRANSAL": "REARR",
+    "INVTR"  : "REARR",
+    "INVTRAL": "REARR",
+    "DUP"    : "REARR",
+    "DUPAL"  : "REARR",
+    "INVDP"  : "REARR",
+    "INVDPAL": "REARR",
+}
+KEEP_TYPES = set(TAG_TO_CANONICAL.keys())
+
+
+def parse_fai(fai_path):
+    """Return ordered dict {chr_name: length} from a .fai file."""
+    chrom_lengths = {}
+    with open(fai_path) as fh:
+        for line in fh:
+            parts = line.strip().split("\t")
+            chrom_lengths[parts[0]] = int(parts[1])
+    return chrom_lengths
+
+
+def parse_syri(syri_path, min_size=0):
+    """Parse syri.out and return a DataFrame of relevant rows."""
+    rows = []
+    with open(syri_path) as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 11:
+                continue
+            var_type = parts[10].strip()
+            if var_type not in TAG_TO_CANONICAL:
+                continue
+            canonical = TAG_TO_CANONICAL[var_type]
+            try:
+                ref_start = int(parts[1])
+                ref_end   = int(parts[2])
+                qry_start = int(parts[6])
+                qry_end   = int(parts[7])
+            except ValueError:
+                continue
+            if abs(ref_end - ref_start) < min_size:
+                continue
+            rows.append({
+                "ref_chr"   : parts[0],
+                "ref_start" : ref_start,
+                "ref_end"   : ref_end,
+                "qry_chr"   : parts[5],
+                "qry_start" : qry_start,
+                "qry_end"   : qry_end,
+                "var_type"  : canonical,
+            })
+    return pd.DataFrame(rows)
+
+
+def chrom_offsets(chrom_lengths, gap_frac=0.01):
+    """
+    Compute x-offsets for each chromosome so they sit side-by-side.
+    Returns (offsets dict, total_span).
+    gap = gap_frac * total_genome_length inserted between each chromosome.
+    """
+    total = sum(chrom_lengths.values())
+    gap   = total * gap_frac
+    offset = 0.0
+    offsets = {}
+    for chrom, length in chrom_lengths.items():
+        offsets[chrom] = offset
+        offset += length + gap
+    total_span = offset - gap
+    return offsets, total_span
+
+
+def bezier_ribbon(ax, x1a, x1b, x2a, x2b, y_top, y_bot, color, alpha):
+    """
+    Draw a filled Bezier ribbon connecting [x1a, x1b] on y_top
+    to [x2a, x2b] on y_bot.
+    """
+    ctrl_y = (y_top + y_bot) / 2
+
+    verts = [
+        (x1a, y_top),
+        (x1a, ctrl_y), (x2a, ctrl_y),
+        (x2a, y_bot),
+        (x2b, y_bot),
+        (x2b, ctrl_y), (x1b, ctrl_y),
+        (x1b, y_top),
+        (x1a, y_top),
+    ]
+    codes = [
+        Path.MOVETO,
+        Path.CURVE4, Path.CURVE4, Path.CURVE4,
+        Path.LINETO,
+        Path.CURVE4, Path.CURVE4, Path.CURVE4,
+        Path.CLOSEPOLY,
+    ]
+    path  = Path(verts, codes)
+    patch = patches.PathPatch(path, facecolor=color, edgecolor="none", alpha=alpha, zorder=1)
+    ax.add_patch(patch)
+
+
+def draw_chromosomes(ax, chrom_lengths, offsets, total_span, y, bar_height,
+                     label_above=True, color="#555555"):
+    """Draw chromosome bars and staggered labels to reduce overlap."""
+    for i, (chrom, length) in enumerate(chrom_lengths.items()):
+        x0 = offsets[chrom]
+        x1 = x0 + length
+
+        # chromosome bar
+        ax.add_patch(mpatches.FancyBboxPatch(
+            (x0, y - bar_height / 2), length, bar_height,
+            boxstyle="round,pad=0",
+            facecolor=color, edgecolor="white", linewidth=0.5, zorder=3
+        ))
+
+        # chromosome label
+        label = chrom.split("_")[-1]
+        label = label.replace("Chromosome", "Chr ")
+
+        mid_x = x0 + length / 2
+
+        # Alternate label height to avoid overlap, especially in microchromosomes
+        if label_above:
+            level = [1.8, 2.8, 3.8][i % 3]
+            label_y = y + bar_height * level
+        else:
+            level = [1.8, 2.8, 3.8][i % 3]
+            label_y = y - bar_height * level
+
+        # Smaller font for tiny chromosomes
+        if length < total_span * 0.03:
+            fontsize = 6
+        elif length < total_span * 0.06:
+            fontsize = 6.5
+        else:
+            fontsize = 7
+
+        ax.text(mid_x, label_y, label,
+                ha="center", va="center",
+                fontsize=fontsize, color="#333333",
+                fontweight="bold")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Plot SyRI synteny ribbons.")
+    parser.add_argument("--syri",      required=True,  help="Path to syri.out")
+    parser.add_argument("--ref_fai",   required=True,  help="Reference .fai index")
+    parser.add_argument("--qry_fai",   required=True,  help="Query .fai index")
+    parser.add_argument("--output",    default="synteny_plot", help="Output prefix")
+    parser.add_argument("--ref_name",  default="Inner Form",   help="Reference genome label")
+    parser.add_argument("--qry_name",  default="Outer Form",   help="Query genome label")
+    parser.add_argument("--min_size",  type=int, default=10000, help="Min block size (bp)")
+    parser.add_argument("--alpha",     type=float, default=0.75, help="Ribbon alpha")
+    parser.add_argument("--fig_width", type=float, default=20)
+    parser.add_argument("--fig_height",type=float, default=6)
+    args = parser.parse_args()
+
+    # ── Load data ─────────────────────────────────────────────────────────────
+    print("Loading FAI files...")
+    ref_lengths = parse_fai(args.ref_fai)
+    qry_lengths = parse_fai(args.qry_fai)
+
+    print("Parsing SyRI output...")
+    df = parse_syri(args.syri, min_size=args.min_size)
+    if df.empty:
+        sys.exit("ERROR: No variants passed filters. Check --min_size or variant types.")
+    print(f"  {len(df)} blocks to plot.")
+    print(f"  Variant counts:\n{df['var_type'].value_counts().to_string()}")
+
+    # ── Compute offsets ────────────────────────────────────────────────────────
+    ref_offsets, ref_span = chrom_offsets(ref_lengths)
+    qry_offsets, qry_span = chrom_offsets(qry_lengths)
+    total_span = max(ref_span, qry_span)
+
+    # Normalise both genomes to the same total width
+    ref_scale = total_span / ref_span
+    qry_scale = total_span / qry_span
+    ref_offsets = {k: v * ref_scale for k, v in ref_offsets.items()}
+    ref_lengths_scaled = {k: v * ref_scale for k, v in ref_lengths.items()}
+    qry_offsets = {k: v * qry_scale for k, v in qry_offsets.items()}
+    qry_lengths_scaled = {k: v * qry_scale for k, v in qry_lengths.items()}
+
+    # ── Canvas ─────────────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(args.fig_width, args.fig_height))
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    Y_TOP = 1.0    # reference genome y
+    Y_BOT = 0.0    # query genome y
+    BAR_H = 0.06
+
+    # ── Ribbons ────────────────────────────────────────────────────────────────
+    # Draw SYN first (bottom layer), then SVs on top
+    order = ["SYN", "REARR"]
+    for vtype in order:
+        subset = df[df["var_type"] == vtype]
+        for _, row in subset.iterrows():
+            rc = row["ref_chr"]
+            qc = row["qry_chr"]
+            if rc not in ref_offsets or qc not in qry_offsets:
+                continue
+            x1a = ref_offsets[rc] + row["ref_start"] * ref_scale
+            x1b = ref_offsets[rc] + row["ref_end"]   * ref_scale
+            x2a = qry_offsets[qc] + row["qry_start"] * qry_scale
+            x2b = qry_offsets[qc] + row["qry_end"]   * qry_scale
+            color = COLORS.get(vtype, "#999999")
+            bezier_ribbon(ax, x1a, x1b, x2a, x2b,
+                          Y_TOP - BAR_H / 2, Y_BOT + BAR_H / 2,
+                          color, args.alpha)
+
+    # ── Chromosome bars ────────────────────────────────────────────────────────
+    draw_chromosomes(ax, ref_lengths_scaled, ref_offsets, total_span,
+                     Y_TOP, BAR_H, label_above=True,
+                     color=GENOME_COLORS.get(args.ref_name, "#444444"))
+    draw_chromosomes(ax, qry_lengths_scaled, qry_offsets, total_span,
+                     Y_BOT, BAR_H, label_above=False,
+                     color=GENOME_COLORS.get(args.qry_name, "#444444"))
+
+    # ── Genome labels ──────────────────────────────────────────────────────────
+    ax.text(-total_span * 0.01, Y_TOP, args.ref_name,
+            ha="right", va="center", fontsize=11, fontstyle="italic",
+            color="#222222", fontweight="bold")
+    ax.text(-total_span * 0.01, Y_BOT, args.qry_name,
+            ha="right", va="center", fontsize=11, fontstyle="italic",
+            color="#222222", fontweight="bold")
+
+    # ── Legend ─────────────────────────────────────────────────────────────────
+    legend_items = {
+        "Synteny"        : COLORS["SYN"],
+        "Rearrangements" : COLORS["REARR"],
+    }
+    handles = [mpatches.Patch(facecolor=c, edgecolor="grey",
+                               linewidth=0.5, label=l)
+               for l, c in legend_items.items()]
+    ax.legend(handles=handles, loc="upper right", frameon=False,
+              fontsize=8, ncol=2, bbox_to_anchor=(1.0, 1.25))
+
+    # ── Axes cleanup ───────────────────────────────────────────────────────────
+    ax.set_xlim(-total_span * 0.13, total_span * 1.01)
+    ax.set_ylim(Y_BOT - 0.40, Y_TOP + 0.40)
+    ax.axis("off")
+    plt.tight_layout()
+
+    # ── Save ───────────────────────────────────────────────────────────────────
+    png_out = f"{args.output}.png"
+    svg_out = f"{args.output}.svg"
+    fig.savefig(png_out, dpi=300, bbox_inches="tight", facecolor="white")
+    fig.savefig(svg_out, bbox_inches="tight", facecolor="white")
+    print(f"Saved: {png_out}")
+    print(f"Saved: {svg_out}")
+    plt.close()
+
+
+if __name__ == "__main__":
+    main()
+
+---
+
+### 2) Main workflow used to perform pairwise whole-genome comparisons among the three assemblies using minimap2, SyRI, and plotsr, including chromosome reordering, orientation correction, and synteny plot generation
+
+nano run_all_syri_pairs.slurm
+
+---
+#!/bin/bash
+#SBATCH --job-name=caretta_syri_3pairs
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=64G
+#SBATCH --time=24:00:00
+#SBATCH --output=%x-%N-%j.log
+#SBATCH --error=%x-%N-%j.err
+#SBATCH --partition=irbio01
+
+echo "[$(date)] Starting 3-pair SyRI pipeline"
+
+export LC_ALL=C
+export LANG=C
+
+# ----------------------------
+# Paths
+# ----------------------------
+MED=/home/MBEacherin/yeray/genomes/GCA_023653815.1_GSC_CCare_1.0_genomic.fna
+ATL=/home/MBEacherin/yeray/genomes/GCA_965117115.1_CarCar_QM_v1.21.12_Sc_genomic.fna
+PAC=/home/MBEacherin/yeray/genomes/GCF_965140235.1_rCarCar1.hap1_genomic.fna
+
+BASE=/home/MBEacherin/yeray/genomes_comparison/asm_compare
+SYRI_BIN=/home/MBEccarreras/.conda/envs/syri/bin
+PLOT_SCRIPT=$BASE/plot_syri_synteny_v2.py
+
+mkdir -p "$BASE/syri"
+
+# ----------------------------
+# Load tools
+# ----------------------------
+. /etc/profile
+module load anaconda/2024.02
+source /aplic/anaconda/2024.02/etc/profile.d/conda.sh
+conda activate /home/MBEacherin/yeray/bio_env
+
+set -euo pipefail
+
+# ----------------------------
+# Basic checks
+# ----------------------------
+command -v samtools >/dev/null 2>&1 || { echo "samtools not found"; exit 1; }
+command -v minimap2 >/dev/null 2>&1 || { echo "minimap2 not found"; exit 1; }
+command -v python >/dev/null 2>&1 || { echo "python not found"; exit 1; }
+command -v seqtk >/dev/null 2>&1 || { echo "seqtk not found"; exit 1; }
+
+[ -f "$BASE/MED_28chr.list" ] || { echo "Missing $BASE/MED_28chr.list"; exit 1; }
+[ -f "$BASE/ATL_28chr.list" ] || { echo "Missing $BASE/ATL_28chr.list"; exit 1; }
+[ -f "$BASE/ATL_28chr_correct.list" ] || { echo "Missing $BASE/ATL_28chr_correct.list"; exit 1; }
+[ -f "$BASE/PAC_28chr.list" ] || { echo "Missing $BASE/PAC_28chr.list"; exit 1; }
+[ -f "$PLOT_SCRIPT" ] || { echo "Missing $PLOT_SCRIPT"; exit 1; }
+
+# ----------------------------
+# Index original FASTA if needed
+# ----------------------------
+[ -f "${MED}.fai" ] || samtools faidx "$MED"
+[ -f "${ATL}.fai" ] || samtools faidx "$ATL"
+[ -f "${PAC}.fai" ] || samtools faidx "$PAC"
+
+# ----------------------------
+# Extract chromosome-only FASTA
+# IMPORTANT:
+# - MED and PAC stay as before
+# - ATL_28chr.fna = old order (for MED_vs_ATL, which already works)
+# - ATL_28chr_correct.fna = corrected order (only for ATL_vs_PAC)
+# ----------------------------
+echo "[$(date)] Extracting chromosome-only FASTA"
+
+samtools faidx "$MED" $(cat "$BASE/MED_28chr.list") > "$BASE/MED_28chr.fna"
+samtools faidx "$ATL" $(cat "$BASE/ATL_28chr.list") > "$BASE/ATL_28chr.fna"
+samtools faidx "$ATL" $(cat "$BASE/ATL_28chr_correct.list") > "$BASE/ATL_28chr_correct.fna"
+samtools faidx "$PAC" $(cat "$BASE/PAC_28chr.list") > "$BASE/PAC_28chr.fna"
+
+samtools faidx "$BASE/MED_28chr.fna"
+samtools faidx "$BASE/ATL_28chr.fna"
+samtools faidx "$BASE/ATL_28chr_correct.fna"
+samtools faidx "$BASE/PAC_28chr.fna"
+
+# ----------------------------
+# Helper: build besthits map
+# ref_chr   qry_chr   aligned_bases
+# ----------------------------
+make_besthits() {
+    local paf="$1"
+    local out="$2"
+
+    awk '{print $6"\t"$1"\t"$10}' "$paf" \
+    | sort -k1,1 -k3,3nr \
+    | awk '!seen[$1]++' \
+    > "$out"
+}
+
+# ----------------------------
+# Helper: build reordered query list from besthits
+# Only first 28 lines = main chromosomes
+# ----------------------------
+make_reordered_list() {
+    local besthits="$1"
+    local outlist="$2"
+
+    head -28 "$besthits" | cut -f2 > "$outlist"
+}
+
+# ----------------------------
+# Helper: rename fasta as Chr01..Chr28
+# ----------------------------
+rename_chr_pad() {
+    local infa="$1"
+    local outfa="$2"
+
+    awk 'BEGIN{n=0} /^>/{n++; printf(">Chr%02d\n", n); next} {print}' "$infa" > "$outfa"
+    samtools faidx "$outfa"
+}
+
+# ----------------------------
+# Helper: RC-fix selected chromosomes in query FASTA
+# Keeps chromosome order intact
+# ----------------------------
+make_rc_fixed_query() {
+    local infa="$1"
+    local chrlist="$2"
+    local outfa="$3"
+
+    rm -f "$outfa"
+
+    while read -r chr; do
+        if grep -qx "$chr" "$chrlist"; then
+            seqtk seq -r <(samtools faidx "$infa" "$chr") >> "$outfa"
+        else
+            samtools faidx "$infa" "$chr" >> "$outfa"
+        fi
+    done < <(cut -f1 "${infa}.fai")
+
+    samtools faidx "$outfa"
+}
+
+# ----------------------------
+# Helper: run one pair
+# args:
+#   pair_name ref_fa qry_fa ref_short qry_short
+# ----------------------------
+run_pair() {
+    local pair_name="$1"
+    local ref_fa="$2"
+    local qry_fa="$3"
+    local ref_short="$4"
+    local qry_short="$5"
+
+    local outdir="$BASE/syri/$pair_name"
+    mkdir -p "$outdir"
+    cd "$outdir"
+
+    echo "[$(date)] Running $pair_name"
+
+    # 1. PAF with original chromosome-only FASTA
+    minimap2 -x asm5 -t 16 "$ref_fa" "$qry_fa" > "${pair_name}.paf"
+
+    # 2. Best hits and reordered query list
+    make_besthits "${pair_name}.paf" "${pair_name}_besthits.tsv"
+    make_reordered_list "${pair_name}_besthits.tsv" "${pair_name}_qry_reordered.list"
+
+    # Safety check: 28 unique chromosomes in reordered query
+    if [ "$(wc -l < "${pair_name}_qry_reordered.list")" -ne 28 ]; then
+        echo "ERROR: ${pair_name}_qry_reordered.list does not contain 28 entries"
+        exit 1
+    fi
+    if [ "$(sort -u "${pair_name}_qry_reordered.list" | wc -l)" -ne 28 ]; then
+        echo "ERROR: ${pair_name}_qry_reordered.list contains duplicated chromosomes"
+        exit 1
+    fi
+
+    # 3. Re-extract query in correct order
+    samtools faidx "$qry_fa" $(cat "${pair_name}_qry_reordered.list") > "${pair_name}_qry_reordered.fna"
+    samtools faidx "${pair_name}_qry_reordered.fna"
+
+    # 4. Rename both ref and query to Chr01..Chr28
+    cp "$ref_fa" "${pair_name}_ref_original_order.fna"
+    samtools faidx "${pair_name}_ref_original_order.fna"
+
+    rename_chr_pad "${pair_name}_ref_original_order.fna" "${pair_name}_ref_pad.fna"
+    rename_chr_pad "${pair_name}_qry_reordered.fna" "${pair_name}_qry_pad.fna"
+
+    # 5. First alignment SAM for SyRI
+    minimap2 -a -x asm5 --eqx -t 16 \
+        "${pair_name}_ref_pad.fna" \
+        "${pair_name}_qry_pad.fna" \
+        > "${pair_name}.sam"
+
+    # 6. First SyRI pass
+    set +e
+    "$SYRI_BIN/syri" \
+        -c "${pair_name}.sam" \
+        -r "${pair_name}_ref_pad.fna" \
+        -q "${pair_name}_qry_pad.fna" \
+        -k -F S \
+        > "${pair_name}_syri_pass1.log" 2>&1
+    pass1_status=$?
+    set -e
+
+    FINAL_QRY="${pair_name}_qry_pad.fna"
+
+    # 7. Detect chromosomes with inverted-orientation warning
+    grep "high fraction of inverted alignments" "${pair_name}_syri_pass1.log" \
+        | sed -E 's/.*Reference chromosome (Chr[0-9]+).*/\1/' \
+        | sort -u \
+        > "${pair_name}_rc_chromosomes.list" || true
+
+    if [ "$pair_name" = "ATL_vs_PAC" ]; then
+        echo "Chr25" >> "${pair_name}_rc_chromosomes.list"
+        sort -u "${pair_name}_rc_chromosomes.list" -o "${pair_name}_rc_chromosomes.list"
+    fi
+
+    # 8. If SyRI failed and inverted chromosomes are detected, RC-fix query and rerun
+    if [ "$pass1_status" -ne 0 ] && [ -s "${pair_name}_rc_chromosomes.list" ]; then
+        echo "[$(date)] ${pair_name}: pass1 failed; applying RC fix to query chromosomes:"
+        cat "${pair_name}_rc_chromosomes.list"
+
+        make_rc_fixed_query \
+            "${pair_name}_qry_pad.fna" \
+            "${pair_name}_rc_chromosomes.list" \
+            "${pair_name}_qry_pad_rcfix.fna"
+
+        minimap2 -a -x asm5 --eqx -t 16 \
+            "${pair_name}_ref_pad.fna" \
+            "${pair_name}_qry_pad_rcfix.fna" \
+            > "${pair_name}_rcfix.sam"
+
+        "$SYRI_BIN/syri" \
+            -c "${pair_name}_rcfix.sam" \
+            -r "${pair_name}_ref_pad.fna" \
+            -q "${pair_name}_qry_pad_rcfix.fna" \
+            -k -F S \
+            > "${pair_name}_syri_pass2.log" 2>&1
+
+        FINAL_QRY="${pair_name}_qry_pad_rcfix.fna"
+
+    elif [ "$pass1_status" -ne 0 ]; then
+        echo "ERROR: ${pair_name} failed in SyRI pass1 and no RC candidates were detected"
+        exit 1
+    else
+        echo "[$(date)] ${pair_name}: SyRI pass1 completed without fatal error"
+    fi
+
+        # 9. plotsr genomes file with custom genome colours
+    get_genome_color() {
+        case "$1" in
+            MED) echo "#FFD93D" ;;
+            NEA) echo "#4999B6" ;;
+            NP)  echo "#ACACA7" ;;
+            *)   echo "#444444" ;;
+        esac
+    }
+
+    REF_COLOR=$(get_genome_color "$ref_short")
+    QRY_COLOR=$(get_genome_color "$qry_short")
+
+    printf "%s\t%s\t%s\n%s\t%s\t%s\n" \
+    "$outdir/${pair_name}_ref_pad.fna" "$ref_short" "lc:${REF_COLOR};lw:1.5" \
+    "$outdir/$FINAL_QRY" "$qry_short" "lc:${QRY_COLOR};lw:1.5" \
+    > genomes.txt
+
+    # Convert all non-syntenic annotations to INV so plotsr draws them in one colour
+    awk 'BEGIN{OFS="\t"}
+    /^#/ {print; next}
+    NF >= 11 && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $7 ~ /^[0-9]+$/ && $8 ~ /^[0-9]+$/ {
+        if($11=="SYN" || $11=="SYNAL") {
+            $11="SYN";
+        } else {
+            $11="TRANS";
+        }
+        print
+    }' syri.out > syri_rearr.out
+
+    # 10. plotsr PNG
+
+export MPLCONFIGDIR=$PWD/mplconfig
+mkdir -p "$MPLCONFIGDIR"
+export MATPLOTLIBRC=$PWD/matplotlibrc
+echo "svg.fonttype: none" > "$MATPLOTLIBRC"
+
+    "$SYRI_BIN/plotsr" \
+        --sr syri_rearr.out \
+        --genomes genomes.txt \
+        -o "${pair_name}_plotsr_v2.png" \
+        -H 8 -W 5
+
+    # 10b. plotsr SVG with legend text changed to Rearrangements
+    "$SYRI_BIN/plotsr" \
+        --sr syri_rearr.out \
+        --genomes genomes.txt \
+        -o "${pair_name}_plotsr_v2.svg" \
+        -H 8 -W 5
+
+    # Fix plotsr legend/text and translocation colour in SVG
+
+    sed -i \
+        -e 's/Translocation/Rearrangements/g' \
+        -e 's/Translocations/Rearrangements/g' \
+        -e 's/#9acd32/#FF4500/g' \
+        "${pair_name}_plotsr_v2.svg"
+
+    # 11. Ribbon plot
+    python "$PLOT_SCRIPT" \
+        --syri syri.out \
+        --ref_fai "$outdir/${pair_name}_ref_pad.fna.fai" \
+        --qry_fai "$outdir/${FINAL_QRY}.fai" \
+        --ref_name "$ref_short" \
+        --qry_name "$qry_short" \
+        --output "${pair_name}_synteny" \
+        --min_size 10000 \
+        --fig_width 22 \
+        --fig_height 7
+
+    echo "[$(date)] Finished $pair_name"
+}
+
+# ----------------------------
+# Run all three pairs
+# IMPORTANT:
+# - MED_vs_ATL unchanged
+# - MED_vs_PAC unchanged
+# - ONLY ATL_vs_PAC uses ATL_28chr_correct.fna as reference
+# ----------------------------
+run_pair "MED_vs_ATL" "$BASE/MED_28chr.fna" "$BASE/ATL_28chr.fna" "MED" "NEA"
+run_pair "MED_vs_PAC" "$BASE/MED_28chr.fna" "$BASE/PAC_28chr.fna" "MED" "NP"
+run_pair "ATL_vs_PAC" "$BASE/ATL_28chr_correct.fna" "$BASE/PAC_28chr.fna" "NEA" "NP"
+
+echo "[$(date)] All 3 pairwise comparisons finished"
+---
