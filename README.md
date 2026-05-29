@@ -36,7 +36,7 @@ Pairwise comparison of the three reference genomes through whole-genome alignmen
 
 `how_to_three_genome_syri`
 
-Pairwise synteny and structural rearrangement analyses using Syri and plotsr to support dotplot-based observations.
+Pairwise synteny and structural rearrangement analyses using SyRI and plotsr to support dotplot-based observations.
 
 `how_to_three_genome_genetic_distance`
 
@@ -53,12 +53,18 @@ The repository also includes a `supplementary_figures/` folder containing comple
 These PDF files were used for exploratory visualization of potential inversion-related patterns across the different assemblies and are provided as supplementary material due to their large size.
 
 ## Software used
-- minimap2
+- Minimap2
 - samtools
 - bcftools
+- vcftools
+- HISAT2
+- FastQC
+- Trimmomatic
+- iDIG
+- Picard
 - Manta
 - SURVIVOR
-- Syri
+- SyRI
 - plotsr
 - R
 - Python
