@@ -460,6 +460,20 @@ venn_list <- split(
   venn_df$comparison
 )
 
+# ordre explícit
+venn_list <- venn_list[c(
+  "MED_vs_ATL",
+  "MED_vs_PAC",
+  "ATL_vs_PAC"
+)]
+
+# etiquetes per a la figura
+names(venn_list) <- c(
+  "MED vs NEA",
+  "MED vs NP",
+  "NEA vs NP"
+)
+
 png(
   file.path(plots_dir, paste0("Venn_30kb_", criterion, ".png")),
   width = 3000,
@@ -474,11 +488,11 @@ venn.diagram(
   cat.fontface = "bold",
   cex = 2.8,
   cat.cex = 1.2,
-  cat.dist = c(0.05, 0.05, 0.08),
+  cat.dist = c(0.10, 0.10, 0.12),
   print.mode = "raw",
   fontfamily = "serif",
   fontface = "bold",
-  margin = 0.12
+  margin = 0.18
 )
 
 dev.off()
