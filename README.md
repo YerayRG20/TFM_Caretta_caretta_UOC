@@ -54,9 +54,9 @@ These PDF files were used for exploratory visualization of potential inversion-r
 
 ## Software used
 - Minimap2
-- samtools
-- bcftools
-- vcftools
+- SAMtools
+- BCFtools
+- VCFtools
 - HISAT2
 - FastQC
 - Trimmomatic
